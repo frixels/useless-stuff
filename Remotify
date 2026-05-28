@@ -1,0 +1,977 @@
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local GUI_NAME = "Super duper flooper"
+local MAX_LOGS = 150
+
+local scanningEnabled = true
+local excludedRemotes = {}
+local blockedRemotes = {}
+local logs = {}
+local hookedRemotes = {}
+local incomingConnections = {}
+local selectedRemote = nil
+local searchQuery = ""
+local logOrder = 0
+local activeFilter = "Out"
+
+if CoreGui:FindFirstChild(GUI_NAME) then
+    CoreGui[GUI_NAME]:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = GUI_NAME
+ScreenGui.Parent = CoreGui
+ScreenGui.IgnoreGuiInset = true
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.5, -270, 0.5, -175)
+MainFrame.Size = UDim2.new(0, 540, 0, 350)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.ClipsDescendants = true
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 6)
+UICorner.Parent = MainFrame
+
+local TopBar = Instance.new("Frame")
+TopBar.Parent = MainFrame
+TopBar.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+TopBar.Size = UDim2.new(1, 0, 0, 26)
+
+local TopBarCorner = Instance.new("UICorner")
+TopBarCorner.CornerRadius = UDim.new(0, 6)
+TopBarCorner.Parent = TopBar
+
+local TopBarFix = Instance.new("Frame")
+TopBarFix.Parent = TopBar
+TopBarFix.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+TopBarFix.BorderSizePixel = 0
+TopBarFix.Position = UDim2.new(0, 0, 1, -6)
+TopBarFix.Size = UDim2.new(1, 0, 0, 6)
+
+local Title = Instance.new("TextLabel")
+Title.Parent = TopBar
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.Size = UDim2.new(0.6, 0, 1, 0)
+Title.Font = Enum.Font.GothamBold
+Title.Text = "Sigma Spy"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 12
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+local filterBtns = {}
+local filterNames = {"Out", "In"}
+
+local ScanToggle = Instance.new("TextButton")
+ScanToggle.Parent = TopBar
+ScanToggle.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+ScanToggle.Position = UDim2.new(1, -108, 0.5, -7)
+ScanToggle.Size = UDim2.new(0, 40, 0, 15)
+ScanToggle.Font = Enum.Font.GothamBold
+ScanToggle.Text = "ON"
+ScanToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+ScanToggle.TextSize = 9
+
+local ScanCorner = Instance.new("UICorner")
+ScanCorner.CornerRadius = UDim.new(0, 3)
+ScanCorner.Parent = ScanToggle
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Parent = TopBar
+CloseBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+CloseBtn.Position = UDim2.new(1, -60, 0.5, -7)
+CloseBtn.Size = UDim2.new(0, 50, 0, 15)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Text = "CLOSE"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.TextSize = 9
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 3)
+CloseCorner.Parent = CloseBtn
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Parent = MainFrame
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Position = UDim2.new(0, 6, 0, 32)
+ContentFrame.Size = UDim2.new(1, -12, 1, -38)
+
+local SearchBox = Instance.new("TextBox")
+SearchBox.Parent = ContentFrame
+SearchBox.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+SearchBox.BorderSizePixel = 0
+SearchBox.Position = UDim2.new(0, 0, 0, 0)
+SearchBox.Size = UDim2.new(0.25, -4, 0, 20)
+SearchBox.Font = Enum.Font.Gotham
+SearchBox.PlaceholderText = "Search..."
+SearchBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+SearchBox.Text = ""
+SearchBox.TextColor3 = Color3.fromRGB(220, 220, 220)
+SearchBox.TextSize = 10
+SearchBox.ClearTextOnFocus = false
+
+local SearchCorner = Instance.new("UICorner")
+SearchCorner.CornerRadius = UDim.new(0, 3)
+SearchCorner.Parent = SearchBox
+
+local ScrollList = Instance.new("ScrollingFrame")
+ScrollList.Parent = ContentFrame
+ScrollList.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+ScrollList.BorderSizePixel = 0
+ScrollList.Position = UDim2.new(0, 0, 0, 23)
+ScrollList.Size = UDim2.new(0.25, -4, 1, -23)
+ScrollList.CanvasSize = UDim2.new(0, 0, 0, 0)
+ScrollList.ScrollBarThickness = 2
+
+local ListCorner = Instance.new("UICorner")
+ListCorner.CornerRadius = UDim.new(0, 4)
+ListCorner.Parent = ScrollList
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Parent = ScrollList
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Padding = UDim.new(0, 1)
+
+local UIPadding = Instance.new("UIPadding")
+UIPadding.Parent = ScrollList
+UIPadding.PaddingTop = UDim.new(0, 3)
+UIPadding.PaddingBottom = UDim.new(0, 3)
+UIPadding.PaddingLeft = UDim.new(0, 3)
+UIPadding.PaddingRight = UDim.new(0, 3)
+
+local RightPanel = Instance.new("Frame")
+RightPanel.Parent = ContentFrame
+RightPanel.BackgroundTransparency = 1
+RightPanel.Position = UDim2.new(0.25, 4, 0, 0)
+RightPanel.Size = UDim2.new(0.75, -4, 1, 0)
+
+local CodeScroll = Instance.new("ScrollingFrame")
+CodeScroll.Parent = RightPanel
+CodeScroll.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+CodeScroll.BorderSizePixel = 0
+CodeScroll.Position = UDim2.new(0, 0, 0, 0)
+CodeScroll.Size = UDim2.new(1, 0, 1, -72)
+CodeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+CodeScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+CodeScroll.ScrollBarThickness = 3
+
+local CodeCorner = Instance.new("UICorner")
+CodeCorner.CornerRadius = UDim.new(0, 4)
+CodeCorner.Parent = CodeScroll
+
+local CodeBox = Instance.new("TextLabel")
+CodeBox.Parent = CodeScroll
+CodeBox.BackgroundTransparency = 1
+CodeBox.Position = UDim2.new(0, 8, 0, 6)
+CodeBox.Size = UDim2.new(1, -16, 0, 0)
+CodeBox.AutomaticSize = Enum.AutomaticSize.Y
+CodeBox.Font = Enum.Font.Code
+CodeBox.Text = ""
+CodeBox.RichText = true
+CodeBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+CodeBox.TextSize = 11
+CodeBox.TextXAlignment = Enum.TextXAlignment.Left
+CodeBox.TextYAlignment = Enum.TextYAlignment.Top
+CodeBox.TextWrapped = true
+CodeBox.ZIndex = 1
+
+local RawCodeBox = Instance.new("TextBox")
+RawCodeBox.Parent = CodeScroll
+RawCodeBox.BackgroundTransparency = 1
+RawCodeBox.Position = UDim2.new(0, 8, 0, 6)
+RawCodeBox.Size = UDim2.new(1, -16, 0, 0)
+RawCodeBox.AutomaticSize = Enum.AutomaticSize.Y
+RawCodeBox.Font = Enum.Font.Code
+RawCodeBox.Text = "-- Waiting for remotes..."
+RawCodeBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+RawCodeBox.TextSize = 11
+RawCodeBox.TextXAlignment = Enum.TextXAlignment.Left
+RawCodeBox.TextYAlignment = Enum.TextYAlignment.Top
+RawCodeBox.ClearTextOnFocus = false
+RawCodeBox.MultiLine = true
+RawCodeBox.TextEditable = false
+RawCodeBox.TextWrapped = true
+RawCodeBox.Visible = false
+RawCodeBox.ZIndex = 5
+
+local BottomPanel = Instance.new("Frame")
+BottomPanel.Parent = RightPanel
+BottomPanel.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+BottomPanel.BorderSizePixel = 0
+BottomPanel.Position = UDim2.new(0, 0, 1, -68)
+BottomPanel.Size = UDim2.new(1, 0, 0, 68)
+
+local BottomCorner = Instance.new("UICorner")
+BottomCorner.CornerRadius = UDim.new(0, 4)
+BottomCorner.Parent = BottomPanel
+
+local function MakeBtn(parent, text, color, xScale, xOffset, wScale)
+    local b = Instance.new("TextButton")
+    b.Parent = parent
+    b.BackgroundColor3 = color
+    b.Position = UDim2.new(xScale, xOffset + 2, 0, 0)
+    b.Size = UDim2.new(wScale, -4, 1, 0)
+    b.Font = Enum.Font.GothamBold
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 9
+    b.BorderSizePixel = 0
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(0, 3)
+    bc.Parent = b
+    return b
+end
+
+local Row1 = Instance.new("Frame")
+Row1.Parent = BottomPanel
+Row1.BackgroundTransparency = 1
+Row1.Position = UDim2.new(0, 5, 0, 6)
+Row1.Size = UDim2.new(1, -10, 0, 18)
+
+local CopyBtn    = MakeBtn(Row1, "Copy",    Color3.fromRGB(52, 152, 219),  0,    0, 1/5)
+local ClearBtn   = MakeBtn(Row1, "Clear",   Color3.fromRGB(52, 73, 94),    1/5,  0, 1/5)
+local ExcludeBtn = MakeBtn(Row1, "Exclude", Color3.fromRGB(230, 126, 34),  2/5,  0, 1/5)
+local BlockBtn   = MakeBtn(Row1, "Block",   Color3.fromRGB(192, 57, 43),   3/5,  0, 1/5)
+local FireBtn    = MakeBtn(Row1, "Fire",    Color3.fromRGB(46, 204, 113),  4/5,  0, 1/5)
+
+local Row2 = Instance.new("Frame")
+Row2.Parent = BottomPanel
+Row2.BackgroundTransparency = 1
+Row2.Position = UDim2.new(0, 5, 0, 29)
+Row2.Size = UDim2.new(1, -10, 0, 18)
+
+local FilterFrame = Instance.new("Frame")
+FilterFrame.Parent = Row2
+FilterFrame.BackgroundTransparency = 1
+FilterFrame.Position = UDim2.new(0, 2, 0, 0)
+FilterFrame.Size = UDim2.new(0.5, -4, 1, 0)
+local FilterLayout = Instance.new("UIListLayout")
+FilterLayout.Parent = FilterFrame
+FilterLayout.FillDirection = Enum.FillDirection.Horizontal
+FilterLayout.Padding = UDim.new(0, 2)
+for _, name in ipairs(filterNames) do
+    local fb = Instance.new("TextButton")
+    fb.Parent = FilterFrame
+    fb.Size = UDim2.new(0.5, -1, 1, 0)
+    fb.Font = Enum.Font.GothamBold
+    fb.Text = name
+    fb.TextSize = 9
+    fb.TextColor3 = Color3.fromRGB(200, 200, 200)
+    fb.BackgroundColor3 = name == "Out" and Color3.fromRGB(52, 152, 219) or Color3.fromRGB(45, 45, 45)
+    fb.BorderSizePixel = 0
+    local fbc = Instance.new("UICorner")
+    fbc.CornerRadius = UDim.new(0, 3)
+    fbc.Parent = fb
+    filterBtns[name] = fb
+end
+
+local ClearExclBtn = MakeBtn(Row2, "Clr Excl",    Color3.fromRGB(80, 80, 80),   0.5,  0, 0.25)
+local ClearBlkBtn  = MakeBtn(Row2, "Clr Block",   Color3.fromRGB(100, 40, 40),  0.75, 0, 0.25)
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Parent = BottomPanel
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Position = UDim2.new(0, -14, 0, 51)
+StatusLabel.Size = UDim2.new(1, -10, 0, 12)
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.Text = "Blocked: 0  |  Excluded: 0  |  Out: 0  |  In: 0"
+StatusLabel.TextColor3 = Color3.fromRGB(194, 194, 194)
+StatusLabel.TextSize = 9
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+local ResizeHandle = Instance.new("TextButton")
+ResizeHandle.Parent = MainFrame
+ResizeHandle.BackgroundColor3 = Color3.fromRGB(52, 152, 219)
+ResizeHandle.Position = UDim2.new(1, -16, 1, -16)
+ResizeHandle.Size = UDim2.new(0, 12, 0, 12)
+ResizeHandle.Text = ""
+ResizeHandle.ZIndex = 10
+
+local ResizeCorner = Instance.new("UICorner")
+ResizeCorner.CornerRadius = UDim.new(0, 2)
+ResizeCorner.Parent = ResizeHandle
+
+local ResizeIcon = Instance.new("TextLabel")
+ResizeIcon.Parent = ResizeHandle
+ResizeIcon.BackgroundTransparency = 1
+ResizeIcon.Size = UDim2.new(1, 0, 1, 0)
+ResizeIcon.Font = Enum.Font.GothamBold
+ResizeIcon.Text = "↘"
+ResizeIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResizeIcon.TextSize = 8
+ResizeIcon.ZIndex = 11
+
+local resizing = false
+local minSize = Vector2.new(400, 280)
+local startSize, startPos
+
+ResizeHandle.MouseButton1Down:Connect(function()
+    resizing = true
+    startSize = MainFrame.AbsoluteSize
+    startPos = UserInputService:GetMouseLocation()
+    MainFrame.Draggable = false
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        resizing = false
+        MainFrame.Draggable = true
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if resizing then
+        local mousePos = UserInputService:GetMouseLocation()
+        local delta = mousePos - startPos
+        local newWidth = math.max(minSize.X, startSize.X + delta.X)
+        local newHeight = math.max(minSize.Y, startSize.Y + delta.Y)
+        MainFrame.Size = UDim2.new(0, newWidth, 0, newHeight)
+    end
+end)
+
+RawCodeBox.FocusLost:Connect(function()
+    CodeBox.Visible = true
+    RawCodeBox.Visible = false
+end)
+
+ScanToggle.MouseButton1Click:Connect(function()
+    scanningEnabled = not scanningEnabled
+    if scanningEnabled then
+        ScanToggle.Text = "ON"
+        ScanToggle.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+    else
+        ScanToggle.Text = "OFF"
+        ScanToggle.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+    end
+end)
+
+local function updateStatus()
+    local excCount = 0
+    local blkCount = 0
+    local outCount = 0
+    local inCount  = 0
+    for _ in pairs(excludedRemotes) do excCount = excCount + 1 end
+    for _ in pairs(blockedRemotes) do blkCount = blkCount + 1 end
+    for _, l in ipairs(logs) do
+        if l.HookType == "outgoing" then outCount = outCount + 1
+        else inCount = inCount + 1 end
+    end
+    StatusLabel.Text = "Blocked: " .. blkCount
+        .. "  |  Excluded: " .. excCount
+        .. "  |  Out: " .. outCount
+        .. "  |  In: " .. inCount
+end
+
+local function updateLogVisibility()
+    local query = searchQuery:lower()
+    for _, log in pairs(logs) do
+        if log.Btn then
+            local nameMatch = query == ""
+                or log.CachedName:lower():find(query, 1, true)
+                or log.CachedArgs:lower():find(query, 1, true)
+            local filterMatch = (activeFilter == "Out" and log.HookType == "outgoing")
+                or (activeFilter == "In"  and log.HookType == "incoming")
+            log.Btn.Visible = nameMatch and filterMatch
+        end
+    end
+    ScrollList.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y)
+end
+
+for _, name in ipairs(filterNames) do
+    filterBtns[name].MouseButton1Click:Connect(function()
+        activeFilter = name
+        for n, b in pairs(filterBtns) do
+            b.BackgroundColor3 = n == name and Color3.fromRGB(52, 152, 219) or Color3.fromRGB(45, 45, 45)
+        end
+        updateLogVisibility()
+    end)
+end
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    searchQuery = SearchBox.Text
+    updateLogVisibility()
+end)
+
+ClearBtn.MouseButton1Click:Connect(function()
+    for _, l in pairs(logs) do if l.Btn then l.Btn:Destroy() end end
+    logs = {}
+    selectedRemote = nil
+    logOrder = 0
+    ScrollList.CanvasSize = UDim2.new(0, 0, 0, 0)
+    RawCodeBox.Text = "-- Cleared logs."
+    CodeBox.Text = "-- Cleared logs."
+    updateStatus()
+end)
+
+ExcludeBtn.MouseButton1Click:Connect(function()
+    if selectedRemote then
+        excludedRemotes[selectedRemote] = true
+        for i = #logs, 1, -1 do
+            if logs[i].Remote == selectedRemote then
+                if logs[i].Btn then logs[i].Btn:Destroy() end
+                table.remove(logs, i)
+            end
+        end
+        selectedRemote = nil
+        RawCodeBox.Text = "-- Remote hidden from log. Call still fires."
+        CodeBox.Text = "-- Remote hidden from log. Call still fires."
+        updateStatus()
+        updateLogVisibility()
+        ExcludeBtn.Text = "Excluded!"
+        task.delay(1.5, function() ExcludeBtn.Text = "Exclude" end)
+    else
+        ExcludeBtn.Text = "Select one!"
+        task.delay(1.5, function() ExcludeBtn.Text = "Exclude" end)
+    end
+end)
+
+ClearExclBtn.MouseButton1Click:Connect(function()
+    excludedRemotes = {}
+    updateStatus()
+    ClearExclBtn.Text = "Cleared!"
+    task.delay(1.5, function() ClearExclBtn.Text = "Clr Excl" end)
+end)
+
+BlockBtn.MouseButton1Click:Connect(function()
+    if selectedRemote then
+        blockedRemotes[selectedRemote] = true
+        for i = #logs, 1, -1 do
+            if logs[i].Remote == selectedRemote then
+                if logs[i].Btn then logs[i].Btn:Destroy() end
+                table.remove(logs, i)
+            end
+        end
+        selectedRemote = nil
+        RawCodeBox.Text = "-- Remote blocked. Calls will be silently dropped."
+        CodeBox.Text = "-- Remote blocked. Calls will be silently dropped."
+        updateStatus()
+        updateLogVisibility()
+        BlockBtn.Text = "Blocked!"
+        task.delay(1.5, function() BlockBtn.Text = "Block" end)
+    else
+        BlockBtn.Text = "Select one!"
+        task.delay(1.5, function() BlockBtn.Text = "Block" end)
+    end
+end)
+
+ClearBlkBtn.MouseButton1Click:Connect(function()
+    blockedRemotes = {}
+    updateStatus()
+    ClearBlkBtn.Text = "Cleared!"
+    task.delay(1.5, function() ClearBlkBtn.Text = "Clr Block" end)
+end)
+
+CopyBtn.MouseButton1Click:Connect(function()
+    sigma.setclipboard(RawCodeBox.Text)
+    CopyBtn.Text = "Copied!"
+    task.delay(1.5, function() CopyBtn.Text = "Copy" end)
+end)
+
+FireBtn.MouseButton1Click:Connect(function()
+    local code = RawCodeBox.Text
+    if code and code ~= "" and code ~= "-- Waiting for remotes..." and code ~= "-- Cleared logs." then
+        local fn, err = sigma.loadstring(code)
+        if fn then
+            pcall(fn)
+            FireBtn.Text = "Fired!"
+        else
+            FireBtn.Text = "Error!"
+        end
+        task.delay(1.5, function() FireBtn.Text = "Fire" end)
+    else
+        FireBtn.Text = "Select one!"
+        task.delay(1.5, function() FireBtn.Text = "Fire" end)
+    end
+end)
+
+local function HighlightLua(code)
+    local keywords = {
+        ["local"] = true, ["function"] = true, ["end"] = true, ["if"] = true,
+        ["then"] = true, ["else"] = true, ["elseif"] = true, ["return"] = true,
+        ["for"] = true, ["while"] = true, ["do"] = true, ["repeat"] = true,
+        ["until"] = true, ["break"] = true, ["continue"] = true, ["in"] = true,
+        ["and"] = true, ["or"] = true, ["not"] = true, ["true"] = true,
+        ["false"] = true, ["nil"] = true
+    }
+    local globals = {
+        ["game"] = true, ["workspace"] = true, ["script"] = true,
+        ["print"] = true, ["warn"] = true, ["error"] = true,
+        ["Vector2"] = true, ["Vector3"] = true, ["CFrame"] = true,
+        ["Color3"] = true, ["UDim2"] = true, ["math"] = true,
+        ["string"] = true, ["table"] = true, ["unpack"] = true
+    }
+    local output = ""
+    local i = 1
+    while i <= #code do
+        local char = code:sub(i, i)
+        if code:sub(i, i+1) == "--" then
+            local endPos = code:find("\n", i) or #code + 1
+            local comment = code:sub(i, endPos - 1)
+            output = output .. '<font color="rgb(106, 153, 85)">' .. comment:gsub("<", "&lt;"):gsub(">", "&gt;") .. '</font>'
+            i = endPos
+        elseif char == '"' or char == "'" then
+            local quote = char
+            local endPos = i + 1
+            local escaped = false
+            while endPos <= #code do
+                local c = code:sub(endPos, endPos)
+                if escaped then
+                    escaped = false
+                elseif c == "\\" then
+                    escaped = true
+                elseif c == quote then
+                    break
+                end
+                endPos = endPos + 1
+            end
+            local str = code:sub(i, endPos)
+            output = output .. '<font color="rgb(206, 145, 120)">' .. str:gsub("<", "&lt;"):gsub(">", "&gt;") .. '</font>'
+            i = endPos + 1
+        elseif char:match("[%a_]") then
+            local endPos = i
+            while endPos <= #code and code:sub(endPos, endPos):match("[%w_]") do
+                endPos = endPos + 1
+            end
+            local word = code:sub(i, endPos - 1)
+            if keywords[word] then
+                output = output .. '<font color="rgb(86, 156, 214)">' .. word .. '</font>'
+            elseif globals[word] then
+                output = output .. '<font color="rgb(78, 201, 176)">' .. word .. '</font>'
+            else
+                output = output .. word
+            end
+            i = endPos
+        elseif char:match("%d") then
+            local endPos = i
+            while endPos <= #code and code:sub(endPos, endPos):match("[%d%.]") do
+                endPos = endPos + 1
+            end
+            local num = code:sub(i, endPos - 1)
+            output = output .. '<font color="rgb(181, 206, 168)">' .. num .. '</font>'
+            i = endPos
+        elseif char == ":" or char == "." then
+            output = output .. char
+            i = i + 1
+            if i <= #code and code:sub(i, i):match("[%a_]") then
+                local endPos = i
+                while endPos <= #code and code:sub(endPos, endPos):match("[%w_]") do
+                    endPos = endPos + 1
+                end
+                local method = code:sub(i, endPos - 1)
+                output = output .. '<font color="rgb(220, 220, 170)">' .. method .. '</font>'
+                i = endPos
+            end
+        else
+            output = output .. char:gsub("<", "&lt;"):gsub(">", "&gt;")
+            i = i + 1
+        end
+    end
+    return output
+end
+
+local function GetPath(obj)
+    if not obj or not obj.Parent then return "nil" end
+    if obj == game then return "game" end
+    if obj == workspace then return "workspace" end
+    if obj.Parent == game then
+        return 'game:GetService("' .. obj.ClassName .. '")'
+    end
+    local path = ""
+    local current = obj
+    while current.Parent and current ~= game do
+        local name = current.Name
+        if name:match("^[%a_][%w_]*$") then
+            path = "." .. name .. path
+        else
+            path = '["' .. name:gsub('"', '\\"') .. '"]' .. path
+        end
+        current = current.Parent
+    end
+    if current == workspace then
+        return "workspace" .. path
+    else
+        return "game" .. path
+    end
+end
+
+local Serialize
+
+local function Serialize(v, indent, visited)
+    indent = indent or 0
+    visited = visited or {}
+    if v == nil then return "nil" end
+    local t = typeof(v)
+    if t == "string" then
+        local result = {}
+        table.insert(result, '"')
+        for i = 1, #v do
+            local byte = string.byte(v, i)
+            local char = string.char(byte)
+            if byte >= 32 and byte <= 126 then
+                if char == '"' then table.insert(result, '\\"')
+                elseif char == '\\' then table.insert(result, '\\\\')
+                else table.insert(result, char) end
+            else
+                table.insert(result, "\\" .. byte)
+            end
+        end
+        table.insert(result, '"')
+        return table.concat(result)
+    elseif t == "number" then
+        if v == math.huge then return "math.huge" end
+        if v == -math.huge then return "-math.huge" end
+        return tostring(v)
+    elseif t == "boolean" then
+        return tostring(v)
+    elseif t == "function" then
+        return "nil --[[ Function ]]"
+    elseif t == "userdata" then
+        return "nil --[[ Userdata ]]"
+    elseif t == "Instance" then
+        return GetPath(v)
+    elseif t == "EnumItem" then
+        return tostring(v)
+    elseif t == "Vector2" then
+        return string.format("Vector2.new(%s, %s)", tostring(v.X), tostring(v.Y))
+    elseif t == "Vector3" then
+        return string.format("Vector3.new(%s, %s, %s)", tostring(v.X), tostring(v.Y), tostring(v.Z))
+    elseif t == "Vector2int16" then
+        return string.format("Vector2int16.new(%d, %d)", v.X, v.Y)
+    elseif t == "Vector3int16" then
+        return string.format("Vector3int16.new(%d, %d, %d)", v.X, v.Y, v.Z)
+    elseif t == "CFrame" then
+        return string.format("CFrame.new(%s)", tostring(v))
+    elseif t == "UDim" then
+        return string.format("UDim.new(%s, %s)", tostring(v.Scale), tostring(v.Offset))
+    elseif t == "UDim2" then
+        return string.format("UDim2.new(%s, %s, %s, %s)", tostring(v.X.Scale), tostring(v.X.Offset), tostring(v.Y.Scale), tostring(v.Y.Offset))
+    elseif t == "Rect" then
+        return string.format("Rect.new(%s, %s, %s, %s)", tostring(v.Min.X), tostring(v.Min.Y), tostring(v.Max.X), tostring(v.Max.Y))
+    elseif t == "Color3" then
+        return string.format("Color3.new(%s, %s, %s)", tostring(v.R), tostring(v.G), tostring(v.B))
+    elseif t == "BrickColor" then
+        return string.format("BrickColor.new(%q)", tostring(v))
+    elseif t == "ColorSequence" then
+        if #v.Keypoints > 2 then return "nil --[[ ColorSequence (Complex) ]]"
+        else return string.format("ColorSequence.new(%s)", Serialize(v.Keypoints[1].Value, indent, visited)) end
+    elseif t == "Ray" then
+        return string.format("Ray.new(%s, %s)", Serialize(v.Origin, indent, visited), Serialize(v.Direction, indent, visited))
+    elseif t == "NumberRange" then
+        return string.format("NumberRange.new(%s, %s)", tostring(v.Min), tostring(v.Max))
+    elseif t == "PhysicalProperties" then
+        return string.format("PhysicalProperties.new(%s, %s, %s, %s, %s)",
+            tostring(v.Density), tostring(v.Friction), tostring(v.Elasticity), tostring(v.FrictionWeight), tostring(v.ElasticityWeight))
+    elseif t == "Faces" then
+        local axes = {}
+        if v.Top    then table.insert(axes, "Enum.NormalId.Top")    end
+        if v.Bottom then table.insert(axes, "Enum.NormalId.Bottom") end
+        if v.Left   then table.insert(axes, "Enum.NormalId.Left")   end
+        if v.Right  then table.insert(axes, "Enum.NormalId.Right")  end
+        if v.Back   then table.insert(axes, "Enum.NormalId.Back")   end
+        if v.Front  then table.insert(axes, "Enum.NormalId.Front")  end
+        return "Faces.new(" .. table.concat(axes, ", ") .. ")"
+    elseif t == "table" then
+        if visited[v] then
+            return '"--[[ Cyclic Reference ]]"'
+        end
+        visited[v] = true
+        local str = "{\n"
+        local count = 0
+        for _ in pairs(v) do count = count + 1 end
+        if count == 0 then return "{}" end
+        if v.n and type(v.n) == "number" then
+            for i = 1, v.n do
+                local val = v[i]
+                local valStr = (val == nil) and "nil" or Serialize(val, indent + 1, visited)
+                str = str .. string.rep("    ", indent + 1) .. "[" .. i .. "] = " .. valStr .. ",\n"
+            end
+        else
+            for k, val in pairs(v) do
+                local keyStr = ""
+                if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+                    keyStr = k
+                elseif type(k) == "string" then
+                    keyStr = '["' .. k .. '"]'
+                else
+                    keyStr = "[" .. Serialize(k, 0, visited) .. "]"
+                end
+                str = str .. string.rep("    ", indent + 1) .. keyStr .. " = " .. Serialize(val, indent + 1, visited) .. ",\n"
+            end
+        end
+        str = str .. string.rep("    ", indent) .. "}"
+        return str
+    end
+    return "nil --[[ " .. t .. " ]]"
+end
+
+local function ConstructScript(name, path, argsStr, count, remoteType)
+    local output = "-- Remote: " .. name .. "\n"
+    output = output .. "-- Path: " .. path .. "\n"
+    output = output .. "-- Type: " .. remoteType .. "\n"
+    output = output .. "-- Args Count: " .. count .. "\n"
+    output = output .. "local args = " .. argsStr .. "\n\n"
+    local unpackCall = "unpack(args, 1, " .. count .. ")"
+    if remoteType == "RemoteFunction" then
+        output = output .. path .. ":InvokeServer(" .. unpackCall .. ")"
+    elseif remoteType == "BindableEvent" then
+        output = output .. path .. ":Fire(" .. unpackCall .. ")"
+    elseif remoteType == "BindableFunction" then
+        output = output .. path .. ":Invoke(" .. unpackCall .. ")"
+    else
+        output = output .. path .. ":FireServer(" .. unpackCall .. ")"
+    end
+    return output
+end
+
+local typeColors = {
+    RemoteEvent           = Color3.fromRGB(230, 126, 34),
+    RemoteFunction        = Color3.fromRGB(155, 89, 182),
+    UnreliableRemoteEvent = Color3.fromRGB(241, 196, 15),
+    OnClientEvent         = Color3.fromRGB(197, 134, 192),
+    BindableEvent         = Color3.fromRGB(46, 204, 113),
+    BindableFunction      = Color3.fromRGB(52, 152, 219),
+}
+
+local function AddLog(info)
+    if not scanningEnabled then return end
+    if blockedRemotes[info.Remote] then return end
+    if excludedRemotes[info.Remote] then return end
+
+    local remote     = info.Remote
+    local remoteType = info.RemoteType or "RemoteEvent"
+    local args       = info.Args or {}
+    local hookType   = info.HookType or "outgoing"
+    local callerScript = info.CallerScript
+
+    local cachedPath = GetPath(remote)
+    local cachedArgs = Serialize(args)
+    local cachedName = remote.Name
+    local argCount   = args.n or #args
+    local timeStr    = os.date("%H:%M:%S")
+
+    local matchedLog = nil
+    for i = #logs, 1, -1 do
+        local l = logs[i]
+        if l.Remote == remote and l.CachedArgs == cachedArgs and l.HookType == hookType then
+            matchedLog = l
+            break
+        end
+    end
+
+    if matchedLog then
+        matchedLog.StackCount = matchedLog.StackCount + 1
+        matchedLog.Time = timeStr
+        logOrder = logOrder + 1
+        matchedLog.Btn.LayoutOrder = -logOrder
+        local callerTxt = matchedLog.CallerScript and ("  " .. tostring(matchedLog.CallerScript)) or ""
+        matchedLog.InfoLabel.Text = timeStr .. "  •  " .. matchedLog.ArgCount .. " args" .. callerTxt .. "  •  " .. matchedLog.StackCount .. "x"
+        for i, l in ipairs(logs) do
+            if l == matchedLog then
+                table.remove(logs, i)
+                break
+            end
+        end
+        table.insert(logs, matchedLog)
+        ScrollList.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y)
+        updateStatus()
+        return
+    end
+
+    local typeCount = 0
+    local oldestIdx = nil
+    for i, l in ipairs(logs) do
+        if l.HookType == hookType then
+            typeCount = typeCount + 1
+            if oldestIdx == nil then oldestIdx = i end
+        end
+    end
+    if typeCount >= MAX_LOGS and oldestIdx then
+        local old = table.remove(logs, oldestIdx)
+        if old.Btn then old.Btn:Destroy() end
+    end
+
+    local entry = {
+        Remote      = remote,
+        CachedName  = cachedName,
+        CachedPath  = cachedPath,
+        CachedArgs  = cachedArgs,
+        CachedType  = remoteType,
+        ArgCount    = argCount,
+        Time        = timeStr,
+        HookType    = hookType,
+        CallerScript = callerScript,
+        StackCount  = 1
+    }
+
+    logOrder = logOrder + 1
+
+    local btn = Instance.new("TextButton")
+    btn.Parent = ScrollList
+    btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+    btn.Size = UDim2.new(1, -6, 0, 28)
+    btn.Font = Enum.Font.GothamMedium
+    btn.Text = ""
+    btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    btn.TextSize = 10
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.ClipsDescendants = true
+    btn.LayoutOrder = -logOrder
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 3)
+    btnCorner.Parent = btn
+
+    local typeColor = typeColors[remoteType] or Color3.fromRGB(149, 165, 166)
+
+    local ind = Instance.new("Frame", btn)
+    ind.Size = UDim2.new(0, 2, 1, 0)
+    ind.BorderSizePixel = 0
+    ind.BackgroundColor3 = typeColor
+
+    local badge = Instance.new("TextLabel", btn)
+    badge.Size = UDim2.new(0, 18, 0, 9)
+    badge.Position = UDim2.new(1, -21, 0, 3)
+    badge.BackgroundColor3 = hookType == "incoming" and Color3.fromRGB(120, 60, 160) or Color3.fromRGB(40, 60, 80)
+    badge.TextColor3 = Color3.fromRGB(255, 255, 255)
+    badge.Font = Enum.Font.GothamBold
+    badge.TextSize = 6
+    badge.Text = hookType == "incoming" and "IN" or "OUT"
+    badge.BorderSizePixel = 0
+    local badgeCorner = Instance.new("UICorner", badge)
+    badgeCorner.CornerRadius = UDim.new(0, 2)
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Parent = btn
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Position = UDim2.new(0, 6, 0, 1)
+    nameLabel.Size = UDim2.new(1, -28, 0, 14)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Text = cachedName
+    nameLabel.TextColor3 = typeColor
+    nameLabel.TextSize = 10
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Parent = btn
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Position = UDim2.new(0, 6, 0, 15)
+    infoLabel.Size = UDim2.new(1, -28, 0, 11)
+    infoLabel.Font = Enum.Font.Gotham
+    infoLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+    infoLabel.TextSize = 8
+    infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    infoLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local callerTxt = callerScript and ("  " .. tostring(callerScript)) or ""
+    infoLabel.Text = timeStr .. "  •  " .. argCount .. " args" .. callerTxt
+
+    btn.MouseButton1Click:Connect(function()
+        for _, l in pairs(logs) do
+            if l.Btn then l.Btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32) end
+        end
+        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 44)
+        selectedRemote = remote
+
+        local out = ConstructScript(cachedName, cachedPath, cachedArgs, argCount, remoteType)
+        if callerScript then
+            out = "-- Called by: " .. tostring(callerScript) .. "\n" .. out
+        end
+        RawCodeBox.Text = out
+        CodeBox.Text = HighlightLua(out)
+    end)
+
+    entry.Btn = btn
+    entry.InfoLabel = infoLabel
+    table.insert(logs, entry)
+    ScrollList.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y)
+    updateStatus()
+    updateLogVisibility()
+end
+
+local function pack(...)
+    return { n = select("#", ...), ... }
+end
+
+local function hookIncoming(remote)
+    if incomingConnections[remote] then return end
+    if not (remote:IsA("RemoteEvent") or remote:IsA("UnreliableRemoteEvent")) then return end
+    incomingConnections[remote] = true
+    pcall(function()
+        remote.OnClientEvent:Connect(function(...)
+            if not scanningEnabled then return end
+            if blockedRemotes[remote] or excludedRemotes[remote] then return end
+            AddLog({
+                Remote = remote,
+                RemoteType = "OnClientEvent",
+                Args = pack(...),
+                HookType = "incoming",
+                CallerScript = nil,
+            })
+        end)
+    end)
+end
+
+local function secureHookRemote(remote)
+    if hookedRemotes[remote] then return end
+    hookedRemotes[remote] = true
+
+    if remote:IsA("RemoteEvent") or remote:IsA("UnreliableRemoteEvent") then
+        local MyEvent = Instance.new("BindableEvent", game.CoreGui)
+        MyEvent.Event:Connect(function(...)
+            if blockedRemotes[remote] then return end
+            local caller = nil
+            pcall(function() caller = sigma.getcallingscript() end)
+            AddLog({
+                Remote = remote,
+                RemoteType = remote.ClassName,
+                Args = pack(...),
+                HookType = "outgoing",
+                CallerScript = caller,
+            })
+        end)
+        pcall(function()
+            sigma.rebounceevent(remote, "OnRemoteServerEvent", MyEvent)
+        end)
+        hookIncoming(remote)
+
+    elseif remote:IsA("RemoteFunction") then
+        local MyEvent = Instance.new("BindableEvent", game.CoreGui)
+        MyEvent.Event:Connect(function(id, player, ...)
+            if blockedRemotes[remote] then return end
+            local caller = nil
+            pcall(function() caller = sigma.getcallingscript() end)
+            AddLog({
+                Remote = remote,
+                RemoteType = "RemoteFunction",
+                Args = pack(...),
+                HookType = "outgoing",
+                CallerScript = caller,
+            })
+        end)
+        pcall(function()
+            sigma.rebounceevent(remote, "RemoteOnInvokeServer", MyEvent)
+        end)
+    end
+end
+
+for _, obj in game:GetDescendants() do
+    if obj.Parent ~= game.RobloxReplicatedStorage then
+        secureHookRemote(obj)
+    end
+end
+
+game.DescendantAdded:Connect(function(obj)
+    if obj.Parent ~= game.RobloxReplicatedStorage then
+        secureHookRemote(obj)
+    end
+end)
