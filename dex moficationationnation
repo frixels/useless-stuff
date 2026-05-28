@@ -1,0 +1,2751 @@
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local AssetService = game:GetService("AssetService")
+local TweenService = game:GetService("TweenService")
+local ReflectionService = game:GetService("ReflectionService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local TextService = game:GetService("TextService")
+local LocalPlayer = game.Players.LocalPlayer
+local mouse = LocalPlayer:GetMouse()
+
+local IncestVector = game:GetService("GuiService"):GetGuiInset()
+local insetOffset = IncestVector.Y
+
+
+local function GetTextSize(TextLabel)
+	return TextService:GetTextSize(
+		TextLabel.Text,
+		TextLabel.TextSize,
+		TextLabel.Font,
+		Vector2.new(math.huge, math.huge)
+	)
+end
+
+local Janitor = {}
+Janitor.__index = Janitor
+
+function Janitor.new()
+	return setmetatable({_objects = {}}, Janitor)
+end
+
+function Janitor:Add(object, methodName)
+	if object then
+		methodName = methodName or "Disconnect"
+		table.insert(self._objects, {object, methodName})
+	end
+	return object
+end
+
+function Janitor:Clean()
+	for i = #self._objects, 1, -1 do
+		local objData = self._objects[i]
+		local obj = objData[1]
+		local method = objData[2]
+		if type(obj) == "function" then
+			obj()
+		elseif typeof(obj) == "RBXScriptConnection" then
+			obj:Disconnect()
+		elseif obj[method] then
+			obj[method](obj)
+		end
+		self._objects[i] = nil
+	end
+end
+
+function Janitor:Destroy()
+	self:Clean()
+	self._objects = nil
+end
+
+-- // 1. THEME CONFIGURATION //
+local Theme = {
+	MainBG = Color3.fromRGB(35, 35, 35),
+	SecondaryBG = Color3.fromRGB(45, 45, 45),
+	HeaderBG = Color3.fromRGB(45, 45, 45),
+	Text = Color3.fromRGB(240, 240, 240),
+	TextDim = Color3.fromRGB(180, 180, 180),
+	Accent = Color3.fromRGB(0, 122, 204),
+	Border = Color3.fromRGB(20, 20, 20),
+	Hover = Color3.fromRGB(60, 60, 60),
+	Scrollbar = Color3.fromRGB(80, 80, 80),
+	Separator = Color3.fromRGB(60, 60, 60)
+}
+
+-- // 2. UI COMPONENT LIBRARY //
+local UI = {}
+
+
+
+local sheet = AssetService:CreateEditableImageAsync("rbxasset://textures/ClassImages.png")
+local iconSize = sheet.Size.Y
+local iconCache: {[number]: Content} = {}
+local function getIconContent(index: number): Content
+	if iconCache[index] then return iconCache[index] end
+
+	local icon = AssetService:CreateEditableImage({ Size = Vector2.new(iconSize, iconSize) })
+	icon:DrawImage(Vector2.new(-index * iconSize, 0), sheet, Enum.ImageCombineType.Overwrite)
+
+	local content = Content.fromObject(icon)
+	iconCache[index] = content
+	return content
+end
+
+
+
+function UI.CreateScreenGui()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "Dex_Optimized"
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	pcall(function()
+		gui.Parent = CoreGui
+	end)
+	if not gui.Parent then gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end
+	return gui
+end
+
+function UI.CreateMainFrame(parent)
+	local frame = Instance.new("Frame")
+	frame.Name = "MainFrame"
+	frame.Parent = parent
+	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	frame.BackgroundTransparency = 0.1
+	frame.BorderColor3 = Theme.Border
+	frame.BorderSizePixel = 1
+	frame.Position = UDim2.new(1, -300, 0, 0)
+	frame.Size = UDim2.new(0, 300, 1, 0)
+	frame.ZIndex = -10
+
+	local layout = Instance.new("UIListLayout")
+	layout.Parent = frame
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 1)
+
+	return frame
+end
+
+function UI.CreatePanel(parent, name, layoutOrder, flexSize)
+	local panel = Instance.new("Frame")
+	panel.Name = name
+	panel.Parent = parent
+	panel.BackgroundColor3 = Color3.new(1,1,1)
+	panel.BackgroundTransparency = 1
+	panel.LayoutOrder = layoutOrder
+	panel.Size = UDim2.new(1, 0, flexSize, 0)
+
+	local header = Instance.new("TextLabel")
+	header.Name = "Header"
+	header.Parent = panel
+	header.BackgroundColor3 = Theme.HeaderBG
+	header.BorderSizePixel = 0
+	header.Size = UDim2.new(1, 0, 0, 24)
+	header.Font = Enum.Font.GothamBold
+	header.Text = "  " .. string.upper(name)
+	header.TextColor3 = Theme.Text
+	header.TextSize = 12
+	header.TextXAlignment = Enum.TextXAlignment.Left
+
+	local search = Instance.new("TextBox")
+	search.Name = "Search"
+	search.Parent = panel
+	search.BackgroundColor3 = Theme.SecondaryBG
+	search.BorderSizePixel = 0
+	search.Position = UDim2.new(0, 0, 0, 24)
+	search.Size = UDim2.new(1, 0, 0, 26)
+	search.Font = Enum.Font.Gotham
+	search.PlaceholderText = " Filter " .. string.lower(name) .. "..."
+	search.Text = ""
+	search.TextColor3 = Theme.Text
+	search.PlaceholderColor3 = Theme.TextDim
+	search.TextSize = 13
+	search.TextXAlignment = Enum.TextXAlignment.Left
+
+	local container = Instance.new("Frame")
+	container.Name = "Container"
+	container.Parent = panel
+	container.BackgroundTransparency = 1
+	container.Position = UDim2.new(0, 0, 0, 50)
+	container.Size = UDim2.new(1, 0, 1, -50)
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "ScrollingFrame"
+	scroll.Parent = container
+	scroll.BackgroundTransparency = 1
+	scroll.Size = UDim2.new(1, 0, 1, 0)
+	scroll.ScrollBarThickness = 4
+	scroll.ScrollBarImageColor3 = Theme.Scrollbar
+	scroll.BorderSizePixel = 0
+
+	local grid = Instance.new("UIGridLayout")
+	grid.Parent = scroll
+	grid.CellPadding = UDim2.new(0, 0, 0, 0)
+	grid.CellSize = UDim2.new(1, 0, 0, 20)
+	grid.SortOrder = Enum.SortOrder.Name 
+
+	return {
+		Frame = panel,
+		Header = header,
+		Search = search,
+		Scroll = scroll,
+		Layout = grid
+	}
+end
+
+function UI.CreateLoadingFrame(parent)
+	local frame = Instance.new("Frame")
+	frame.Name = "loadingFrame"
+	frame.Parent = parent
+	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	frame.BackgroundTransparency = 0.2
+	frame.Size = UDim2.new(1, 0, 1, 0)
+	frame.ZIndex = 10
+	frame.Visible = false
+
+	local img = Instance.new("ImageLabel")
+	img.Parent = frame
+	img.BackgroundTransparency = 1
+	img.Position = UDim2.new(0.5, -25, 0.5, -25)
+	img.Size = UDim2.new(0, 50, 0, 50)
+	img.Image = "rbxasset://textures/DarkThemeLoadingCircle.png"
+
+	local txt = Instance.new("TextLabel")
+	txt.Parent = frame
+	txt.BackgroundTransparency = 1
+	txt.Position = UDim2.new(0, 0, 0.55, 0)
+	txt.Size = UDim2.new(1, 0, 0, 30)
+	txt.Font = Enum.Font.GothamMedium
+	txt.Text = "Processing..."
+	txt.TextColor3 = Theme.Text
+	txt.TextSize = 14
+
+	return frame, img
+end
+
+-- // 3. TEMPLATE GENERATORS //
+
+local Templates = {}
+
+local ExplorerItemTemplate = (function()
+	local item = Instance.new("Frame")
+	item.Name = "Expl_item" 
+	item.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	item.BackgroundTransparency = 1
+	item.ClipsDescendants = true
+	item.Size = UDim2.new(0, 100, 0, 20)
+
+	local sizeFrame = Instance.new("Frame")
+	sizeFrame.Name = "Size_Frame"
+	sizeFrame.Parent = item
+	sizeFrame.BackgroundTransparency = 1
+	sizeFrame.Size = UDim2.new(1, 0, 1, 0)
+
+	local v1 = Instance.new("BoolValue", sizeFrame); v1.Name = "IsOpen"
+
+	local icon = Instance.new("ImageLabel")
+	icon.Name = "Type_Img"
+	icon.Parent = sizeFrame
+	icon.BackgroundTransparency = 1
+	icon.Position = UDim2.new(0, 20, 0.15, 0)
+	icon.Size = UDim2.new(0, 14, 0, 14)
+	icon.Image = "rbxasset://textures/ClassImages.png"
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.Name = "Nam"
+	nameLbl.Parent = sizeFrame
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.Position = UDim2.new(0, 40, 0, 0)
+	nameLbl.Size = UDim2.new(1, -40, 1, 0)
+	nameLbl.Font = Enum.Font.Gotham
+	nameLbl.TextColor3 = Theme.Text
+	nameLbl.TextSize = 13
+	nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+	nameLbl.TextWrapped = false
+	nameLbl.ClipsDescendants = true
+
+	local expandBtn = Instance.new("ImageButton")
+	expandBtn.Name = "Unpack"
+	expandBtn.Parent = sizeFrame
+	expandBtn.BackgroundTransparency = 1
+	expandBtn.Position = UDim2.new(0, 2, 0.2, 0)
+	expandBtn.Rotation = -90
+	expandBtn.Size = UDim2.new(0, 12, 0, 12)
+	expandBtn.Image = "http://www.roblox.com/asset/?id=6005799222"
+	expandBtn.ImageColor3 = Theme.TextDim
+
+	local selectBtn = Instance.new("TextButton")
+	selectBtn.Name = "Select"
+	selectBtn.Parent = sizeFrame
+	selectBtn.BackgroundTransparency = 1
+	selectBtn.BackgroundColor3 = Theme.Accent
+	selectBtn.BorderSizePixel = 0
+	selectBtn.Size = UDim2.new(1, 0, 1, 0)
+	selectBtn.ZIndex = -1
+	selectBtn.Text = ""
+	selectBtn.AutoButtonColor = false
+
+	local fastSel = Instance.new("Frame")
+	fastSel.Name = "FastSelect"
+	fastSel.Parent = sizeFrame
+	fastSel.BackgroundColor3 = Theme.Accent
+	fastSel.BackgroundTransparency = 0.85
+	fastSel.Size = UDim2.new(1, 0, 1, 0)
+	fastSel.Visible = false
+	fastSel.ZIndex = -2
+	fastSel.BorderSizePixel = 0
+
+	local insBtn = Instance.new("ImageButton")
+	insBtn.Name = "Insert"
+	insBtn.Parent = sizeFrame
+	insBtn.BackgroundTransparency = 1
+	insBtn.Size = UDim2.new(0, 14, 0, 14)
+	insBtn.Image = "rbxasset://textures/ui/CloseButton.png"
+	insBtn.ImageColor3 = Theme.Text
+	insBtn.Visible = false
+	insBtn.Rotation = 45
+
+	return item
+end)()
+
+local PropCategoryTemplate = (function()
+	local f = Instance.new("Frame")
+	f.Name = "Main_Propt"
+	f.BackgroundColor3 = Theme.HeaderBG
+	f.BorderSizePixel = 0
+	f.Size = UDim2.new(0, 100, 0, 24)
+
+	local txt = Instance.new("TextLabel")
+	txt.Name = "Text"
+	txt.Parent = f
+	txt.BackgroundTransparency = 1
+	txt.Position = UDim2.new(0.09, 0, 0, 0)
+	txt.Size = UDim2.new(0.91, 0, 1, 0)
+	txt.Font = Enum.Font.GothamBold
+	txt.TextColor3 = Theme.Text
+	txt.TextSize = 12
+	txt.TextXAlignment = Enum.TextXAlignment.Left
+
+	local btn = Instance.new("ImageButton")
+	btn.Name = "Unpack"
+	btn.Parent = f
+	btn.BackgroundTransparency = 1
+	btn.Position = UDim2.new(0.01, 0, 0.25, 0)
+	btn.Rotation = -90
+	btn.Size = UDim2.new(0, 12, 0, 12)
+	btn.Image = "http://www.roblox.com/asset/?id=6005799222"
+	btn.ImageColor3 = Theme.Text
+	return f
+end)()
+
+local PropItemTemplate = (function()
+	local f = Instance.new("Frame")
+	f.Name = "Main_Prop"
+	f.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	f.BorderColor3 = Theme.SecondaryBG
+	f.BorderSizePixel = 0
+	f.Size = UDim2.new(0, 100, 0, 22)
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.Name = "OverName"
+	nameLbl.Parent = f
+	nameLbl.BackgroundColor3 = Theme.MainBG
+	nameLbl.BackgroundTransparency = 0.5
+	nameLbl.BorderSizePixel = 0
+	nameLbl.Size = UDim2.new(0.4, 0, 1, 0)
+	nameLbl.Font = Enum.Font.Gotham
+	nameLbl.TextColor3 = Theme.TextDim
+	nameLbl.TextSize = 12
+	nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+	nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+	return f
+end)()
+
+local InsertItemTemplate = (function()
+	local f = Instance.new("Frame")
+	f.Name = "Insert"
+	f.BackgroundColor3 = Theme.MainBG
+	f.BorderColor3 = Theme.Border
+	f.BorderSizePixel = 0
+	f.Size = UDim2.new(0, 100, 0, 24)
+	f.ZIndex = 6
+
+	local img = Instance.new("ImageLabel")
+	img.Name = "Type_Img"
+	img.Parent = f
+	img.BackgroundTransparency = 1
+	img.Position = UDim2.new(0.02, 0, 0.15, 0)
+	img.Size = UDim2.new(0, 16, 0, 16)
+	img.Image = "rbxasset://textures/ClassImages.PNG"
+	img.ZIndex = 7
+
+	local txt = Instance.new("TextLabel")
+	txt.Name = "Ins_Name"
+	txt.Parent = f
+	txt.BackgroundTransparency = 1
+	txt.Position = UDim2.new(0.12, 0, 0, 0)
+	txt.Size = UDim2.new(0.8, 0, 1, 0)
+	txt.Font = Enum.Font.Gotham
+	txt.TextColor3 = Theme.Text
+	txt.TextSize = 13
+	txt.TextXAlignment = Enum.TextXAlignment.Left
+	txt.ZIndex = 7
+
+	local btn = Instance.new("TextButton")
+	btn.Name = "Insertbutton"
+	btn.Parent = f
+	btn.BackgroundTransparency = 1
+	btn.Size = UDim2.new(1, 0, 1, 0)
+	btn.Text = ""
+	btn.ZIndex = 8
+	btn.AutoButtonColor = false
+
+	btn.MouseEnter:Connect(function()
+		f.BackgroundColor3 = Theme.Hover
+	end)
+	btn.MouseLeave:Connect(function()
+		f.BackgroundColor3 = Theme.MainBG
+	end)
+
+	return f
+end)()
+
+function Templates.GetExplorerItem() return ExplorerItemTemplate:Clone() end
+function Templates.GetPropCategory() return PropCategoryTemplate:Clone() end
+function Templates.GetPropItem() return PropItemTemplate:Clone() end
+function Templates.GetInsertItem() return InsertItemTemplate:Clone() end
+
+-- // 4. CONSTRUCT THE GUI //
+local ScreenGui = UI.CreateScreenGui()
+local MainFrame = UI.CreateMainFrame(ScreenGui)
+
+local DexIsHidden = false
+local HideButton = Instance.new("TextButton")
+HideButton.Name = "HideButton"
+HideButton.Parent = ScreenGui
+HideButton.BackgroundColor3 = Theme.HeaderBG
+HideButton.BorderColor3 = Theme.Border
+HideButton.BorderSizePixel = 1
+HideButton.Position = UDim2.new(1, -60, 0, 5)
+HideButton.Size = UDim2.new(0, 55, 0, 20)
+HideButton.Font = Enum.Font.GothamBold
+HideButton.Text = "HIDE"
+HideButton.TextColor3 = Theme.Text
+HideButton.TextSize = 11
+HideButton.ZIndex = 100
+
+HideButton.MouseButton1Click:Connect(function()
+	DexIsHidden = not DexIsHidden
+	if DexIsHidden then
+		MainFrame.Visible = false
+		HideButton.Text = "SHOW"
+	else
+		MainFrame.Visible = true
+		HideButton.Text = "HIDE"
+	end
+end)
+
+-- // COLOR PICKER UI //
+local ColorPickerFrame = Instance.new("Frame")
+ColorPickerFrame.Name = "ColorPicker"
+ColorPickerFrame.Parent = ScreenGui
+ColorPickerFrame.Size = UDim2.new(0, 200, 0, 220)
+ColorPickerFrame.BackgroundColor3 = Theme.MainBG
+ColorPickerFrame.BorderColor3 = Theme.Accent
+ColorPickerFrame.BorderSizePixel = 1
+ColorPickerFrame.Visible = false
+ColorPickerFrame.ZIndex = 25
+
+local CP_SV = Instance.new("ImageButton", ColorPickerFrame)
+CP_SV.Name = "SatVal"
+CP_SV.Size = UDim2.new(0, 180, 0, 180)
+CP_SV.Position = UDim2.new(0, 10, 0, 10)
+CP_SV.AutoButtonColor = false
+CP_SV.Image = "rbxassetid://4155801252"
+
+local CP_Hue = Instance.new("ImageButton", ColorPickerFrame)
+CP_Hue.Name = "Hue"
+CP_Hue.Size = UDim2.new(0, 180, 0, 15)
+CP_Hue.Position = UDim2.new(0, 10, 0, 195)
+CP_Hue.AutoButtonColor = false
+CP_Hue.Image = "rbxassetid://4155801252"
+
+local CP_Rainbow = Instance.new("UIGradient", CP_Hue)
+CP_Rainbow.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255,0,0)),
+	ColorSequenceKeypoint.new(0.166, Color3.fromRGB(255,255,0)),
+	ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0,255,0)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0,255,255)),
+	ColorSequenceKeypoint.new(0.666, Color3.fromRGB(0,0,255)),
+	ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255,0,255)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255,0,0))
+})
+
+local CP_CursorSV = Instance.new("Frame", CP_SV)
+CP_CursorSV.Size = UDim2.new(0, 6, 0, 6)
+CP_CursorSV.AnchorPoint = Vector2.new(0.5, 0.5)
+CP_CursorSV.BackgroundColor3 = Color3.new(1,1,1)
+CP_CursorSV.BorderColor3 = Color3.new(0,0,0)
+
+local CP_CursorHue = Instance.new("Frame", CP_Hue)
+CP_CursorHue.Size = UDim2.new(0, 4, 1, 0)
+CP_CursorHue.AnchorPoint = Vector2.new(0.5, 0)
+CP_CursorHue.BackgroundColor3 = Color3.new(1,1,1)
+CP_CursorHue.BorderColor3 = Color3.new(0,0,0)
+
+-- // BRICKCOLOR PICKER UI //
+local BCFrame = Instance.new("Frame")
+BCFrame.Name = "BCPicker"
+BCFrame.Parent = ScreenGui
+BCFrame.Size = UDim2.new(0, 210, 0, 250)
+BCFrame.BackgroundColor3 = Theme.MainBG
+BCFrame.BorderColor3 = Theme.Accent
+BCFrame.BorderSizePixel = 1
+BCFrame.Visible = false
+BCFrame.ZIndex = 25
+
+local BCScroll = Instance.new("ScrollingFrame", BCFrame)
+BCScroll.Size = UDim2.new(1, 0, 1, 0)
+BCScroll.BackgroundTransparency = 1
+BCScroll.ScrollBarThickness = 0
+local BCGrid = Instance.new("UIGridLayout", BCScroll)
+BCGrid.CellSize = UDim2.new(0, 20, 0, 20)
+BCGrid.CellPadding = UDim2.new(0, 1, 0, 1)
+
+-- // INSTANCE SELECTOR UI //
+local InstanceSelectIcon = Instance.new("ImageLabel")
+InstanceSelectIcon.Parent = ScreenGui
+InstanceSelectIcon.Size = UDim2.new(0, 24, 0, 24)
+InstanceSelectIcon.Image = "rbxasset://textures/StudioToolbox/AssetPreview/cursor_plus.png"
+InstanceSelectIcon.BackgroundTransparency = 1
+InstanceSelectIcon.Visible = false
+InstanceSelectIcon.ZIndex = 100
+
+local InstanceSelectorState = {
+	Active = false,
+	Object = nil,
+	PropName = nil,
+	Callback = nil
+}
+
+local ExplorerData = UI.CreatePanel(MainFrame, "Explorer", 1, 0.6)
+local ExplorerPanel = ExplorerData.Frame
+local ExplorerScroll = ExplorerData.Scroll
+local ExplorerSearch = ExplorerData.Search
+ExplorerData.Layout.CellSize = UDim2.new(1, 0, 0, 20)
+ExplorerData.Layout.SortOrder = Enum.SortOrder.Name
+
+local PropertiesData = UI.CreatePanel(MainFrame, "Properties", 2, 0.4)
+local PropertiesPanel = PropertiesData.Frame
+local PropertiesScroll = PropertiesData.Scroll
+local PropertiesSearch = PropertiesData.Search
+PropertiesData.Layout.CellSize = UDim2.new(1, 0, 0, 22)
+PropertiesData.Layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+
+local LoadingFrame, LoadingIcon = UI.CreateLoadingFrame(ExplorerPanel)
+local IsLoadingVal = Instance.new("BoolValue", ExplorerPanel)
+IsLoadingVal.Name = "IsLoading"
+
+-- // CONTEXT MENU & DIALOGS //
+
+-- Rename Dialog
+local RenameFrame = Instance.new("Frame")
+RenameFrame.Name = "RenameFrame"
+RenameFrame.Parent = ScreenGui
+RenameFrame.BackgroundColor3 = Theme.MainBG
+RenameFrame.BorderColor3 = Theme.Accent
+RenameFrame.BorderSizePixel = 1
+RenameFrame.Size = UDim2.new(0, 200, 0, 80)
+RenameFrame.Position = UDim2.new(0.5, -100, 0.5, -40)
+RenameFrame.Visible = false
+RenameFrame.ZIndex = 30
+
+local RenameTitle = Instance.new("TextLabel", RenameFrame)
+RenameTitle.Size = UDim2.new(1,0,0,25)
+RenameTitle.BackgroundTransparency = 1
+RenameTitle.Text = "Rename Object"
+RenameTitle.TextColor3 = Theme.Text
+RenameTitle.Font = Enum.Font.GothamBold
+RenameTitle.TextSize = 14
+
+local RenameBox = Instance.new("TextBox", RenameFrame)
+RenameBox.Size = UDim2.new(0.9, 0, 0, 30)
+RenameBox.Position = UDim2.new(0.05, 0, 0.4, 0)
+RenameBox.BackgroundColor3 = Theme.SecondaryBG
+RenameBox.TextColor3 = Theme.Text
+RenameBox.Text = ""
+RenameBox.Font = Enum.Font.Gotham
+RenameBox.TextSize = 14
+RenameBox.BorderSizePixel = 0
+
+-- Context Menu
+local ContextMenu = Instance.new("Frame")
+ContextMenu.Name = "StudioContextMenu"
+ContextMenu.Parent = ScreenGui
+ContextMenu.BackgroundColor3 = Theme.MainBG
+ContextMenu.BorderColor3 = Theme.Border
+ContextMenu.BorderSizePixel = 1
+ContextMenu.BackgroundTransparency = 0.6
+ContextMenu.Size = UDim2.new(0, 200, 0, 0) 
+ContextMenu.Visible = false
+ContextMenu.ZIndex = 50
+
+local ContextLayout = Instance.new("UIListLayout")
+ContextLayout.Parent = ContextMenu
+ContextLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function CreateContextBtn(text, shortcut, layoutOrder)
+	local btn = Instance.new("TextButton")
+	btn.Name = text
+	btn.LayoutOrder = layoutOrder
+	btn.Size = UDim2.new(1, 0, 0, 24)
+	btn.BackgroundColor3 = Theme.MainBG
+	btn.BorderSizePixel = 0
+	btn.Font = Enum.Font.Gotham
+	btn.Text = "   " .. text
+	btn.TextColor3 = Theme.Text
+	btn.TextSize = 13
+	btn.TextXAlignment = Enum.TextXAlignment.Left
+	btn.AutoButtonColor = false
+
+	if shortcut then
+		local scLabel = Instance.new("TextLabel", btn)
+		scLabel.Size = UDim2.new(1, -10, 0, 24)
+		scLabel.BackgroundTransparency = 1
+		scLabel.Text = shortcut
+		scLabel.TextColor3 = Theme.TextDim
+		scLabel.TextSize = 8
+		scLabel.TextXAlignment = Enum.TextXAlignment.Right
+	end
+
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Theme.Accent end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Theme.MainBG end)
+
+	return btn
+end
+
+local function CreateSeparator(layoutOrder)
+	local f = Instance.new("Frame")
+	f.Name = "Separator"
+	f.LayoutOrder = layoutOrder
+	f.BackgroundColor3 = Theme.Separator
+	f.BorderSizePixel = 0
+	f.Size = UDim2.new(1, 0, 0, 1)
+	return f
+end
+
+-- // ENUM DROPDOWN UI //
+local EnumFrame = Instance.new("ScrollingFrame")
+EnumFrame.Name = "EnumDropdown"
+EnumFrame.Parent = ScreenGui
+EnumFrame.BackgroundColor3 = Theme.MainBG
+EnumFrame.BorderColor3 = Theme.Accent
+EnumFrame.BorderSizePixel = 1
+EnumFrame.Size = UDim2.new(0, 160, 0, 200)
+EnumFrame.Visible = false
+EnumFrame.ZIndex = 20
+EnumFrame.ScrollBarThickness = 4
+EnumFrame.ScrollBarImageColor3 = Theme.Scrollbar
+local EnumLayout = Instance.new("UIListLayout", EnumFrame)
+EnumLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- // INSERT MENU //
+local InsertFrame = Instance.new("Frame")
+InsertFrame.Name = "Insert"
+InsertFrame.Parent = ScreenGui
+InsertFrame.BackgroundColor3 = Theme.MainBG
+InsertFrame.BorderColor3 = Theme.Border
+InsertFrame.BorderSizePixel = 1
+InsertFrame.Size = UDim2.new(0, 232, 0, 400)
+InsertFrame.Visible = false
+InsertFrame.ZIndex = 5
+
+local InsertHeader = Instance.new("Frame")
+InsertHeader.Name = "Upppbar"
+InsertHeader.Parent = InsertFrame
+InsertHeader.BackgroundColor3 = Theme.HeaderBG
+InsertHeader.Size = UDim2.new(1, 0, 0, 30)
+InsertHeader.BorderSizePixel = 0
+InsertHeader.ZIndex = 6
+
+local InsertSearch = Instance.new("TextBox")
+InsertSearch.Parent = InsertHeader
+InsertSearch.BackgroundColor3 = Theme.SecondaryBG
+InsertSearch.BorderSizePixel = 0
+InsertSearch.Position = UDim2.new(0.03, 0, 0.15, 0)
+InsertSearch.Size = UDim2.new(0.84, 0, 0.7, 0)
+InsertSearch.Font = Enum.Font.Gotham
+InsertSearch.PlaceholderText = "Search class..."
+InsertSearch.Text = ""
+InsertSearch.TextColor3 = Theme.Text
+InsertSearch.TextSize = 13
+InsertSearch.TextXAlignment = Enum.TextXAlignment.Left
+InsertSearch.ZIndex = 7
+
+local InsertClose = Instance.new("ImageButton")
+InsertClose.Name = "Close"
+InsertClose.Parent = InsertHeader
+InsertClose.BackgroundTransparency = 1
+InsertClose.Position = UDim2.new(0.9, 0, 0.2, 0)
+InsertClose.Size = UDim2.new(0, 18, 0, 18)
+InsertClose.Image = "rbxasset://textures/StudioSharedUI/close.png"
+InsertClose.ImageColor3 = Theme.Text
+InsertClose.ZIndex = 7
+
+local InsertScroll = Instance.new("ScrollingFrame")
+InsertScroll.Parent = InsertFrame
+InsertScroll.BackgroundTransparency = 1
+InsertScroll.Position = UDim2.new(0, 0, 0, 30)
+InsertScroll.Size = UDim2.new(1, 0, 1, -30)
+InsertScroll.ScrollBarThickness = 4
+InsertScroll.ScrollBarImageColor3 = Theme.Scrollbar
+InsertScroll.BorderSizePixel = 0
+InsertScroll.ZIndex = 6
+local InsertGrid = Instance.new("UIGridLayout", InsertScroll)
+InsertGrid.CellSize = UDim2.new(1, 0, 0, 24)
+
+
+-- // 5. CORE LOGIC //
+local function numberToLetters(n)
+	local result = ""
+
+	while n > 0 do
+		n -= 1
+		local remainder = n % 26
+		result = string.char(97 + remainder) .. result
+		n = math.floor(n / 26)
+	end
+
+	return result
+end
+
+local function ParseVector3(text)
+	local parts = string.split(text, ",")
+	if #parts == 3 then
+		return Vector3.new(tonumber(parts[1]) or 0, tonumber(parts[2]) or 0, tonumber(parts[3]) or 0)
+	end
+	return nil
+end
+
+local ColorMaid = Janitor.new()
+local BrickColorMaid = Janitor.new()
+local EnumMaid = Janitor.new()
+
+local function StartLogic()
+	local SelectionBox = Instance.new("Highlight")
+	SelectionBox.Name = "DexSelectionHighlight"
+	SelectionBox.FillColor = Theme.Accent
+	SelectionBox.FillTransparency = 0.75
+	SelectionBox.OutlineColor = Theme.Accent
+	SelectionBox.OutlineTransparency = 0
+	SelectionBox.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	SelectionBox.Parent = ScreenGui
+
+	local MultiSelection = {}
+	local LastSelectionIndexObj = nil
+	local selectedObject = nil
+
+	local DragSystem = {
+		DraggingObj = nil,
+		TargetObj = nil,
+		VisualObj = nil,
+		IsDragging = false
+	}
+
+	local Clipboard = {}
+	local NodeMap = {} 
+
+	local function updateExplorerScroll() 
+		local count = 0
+		for _, c in pairs(ExplorerScroll:GetChildren()) do
+			if c:IsA("Frame") and c.Visible then count = count + 1 end
+		end
+		ExplorerScroll.CanvasSize = UDim2.new(0,0,0, count * 20)
+	end
+
+	local function updatePropertiesScroll()
+		local count = 0
+		for _, c in pairs(PropertiesScroll:GetChildren()) do
+			if c:IsA("Frame") and c.Visible then count = count + 1 end
+		end
+		PropertiesScroll.CanvasSize = UDim2.new(0,0,0, count * 22)
+	end
+
+	PropertiesSearch:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = string.lower(PropertiesSearch.Text)
+		local isSearching = text ~= ""
+
+		if isSearching then
+			for _, child in pairs(PropertiesScroll:GetChildren()) do
+				if child:IsA("Frame") then child.Visible = false end
+			end
+
+			for _, child in pairs(PropertiesScroll:GetChildren()) do
+				if child:IsA("Frame") and child.Name:sub(1, 5) == "Prop_" then
+					if string.find(string.lower(child.OverName.Text), text) then
+						child.Visible = true
+						local catName = child:GetAttribute("Category")
+						if catName then
+							local catFrame = PropertiesScroll:FindFirstChild("Cat_" .. catName)
+							if catFrame then catFrame.Visible = true end
+						end
+					end
+				end
+			end
+		else
+			for _, child in pairs(PropertiesScroll:GetChildren()) do
+				if child:IsA("Frame") then
+					if child.Name:sub(1, 4) == "Cat_" then
+						child.Visible = true
+					elseif child.Name:sub(1, 5) == "Prop_" then
+						local catName = child:GetAttribute("Category")
+						local catFrame = PropertiesScroll:FindFirstChild("Cat_" .. catName)
+						if catFrame and catFrame.Unpack.Rotation == 0 then
+							child.Visible = true
+						else
+							child.Visible = false
+						end
+					end
+				end
+			end
+		end
+		updatePropertiesScroll()
+	end)
+
+	local ExtraHighlights = {}
+
+	local function SetHighlight(obj)
+		for _, h in ipairs(ExtraHighlights) do h:Destroy() end
+		table.clear(ExtraHighlights)
+
+		if not obj then
+			SelectionBox.Adornee = nil
+			return
+		end
+
+		if obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("Model") then
+			SelectionBox.Adornee = obj
+			return
+		end
+
+		local adornees = {}
+		local queue = {obj}
+		local head = 1
+
+		while head <= #queue do
+			local current = queue[head]
+			head += 1
+
+			for _, child in ipairs(current:GetChildren()) do
+				if child:IsA("Model") then
+					table.insert(adornees, child)
+				elseif child:IsA("BasePart") or child:IsA("MeshPart") then
+					table.insert(adornees, child)
+				else
+					table.insert(queue, child)
+				end
+			end
+		end
+
+		if #adornees == 0 then
+			SelectionBox.Adornee = nil
+			return
+		end
+
+		SelectionBox.Adornee = adornees[1]
+		for i = 2, #adornees do
+			local h = Instance.new("Highlight")
+			h.FillColor = SelectionBox.FillColor
+			h.FillTransparency = SelectionBox.FillTransparency
+			h.OutlineColor = SelectionBox.OutlineColor
+			h.OutlineTransparency = SelectionBox.OutlineTransparency
+			h.DepthMode = SelectionBox.DepthMode
+			h.Adornee = adornees[i]
+			h.Parent = ScreenGui
+			table.insert(ExtraHighlights, h)
+		end
+	end
+
+	local function ClearSelection()
+		for obj, _ in pairs(MultiSelection) do
+			local node = NodeMap[obj]
+			if node then
+				node.Frame.Size_Frame.Select.BackgroundTransparency = 1
+				pcall(function() node.Frame.Size_Frame.FastSelect.Visible = false end)
+			end
+		end
+		table.clear(MultiSelection)
+		SetHighlight(nil)
+		selectedObject = nil
+	end
+
+	local function AddToSelection(obj)
+		MultiSelection[obj] = true
+		local node = NodeMap[obj]
+		if node then
+			node.Frame.Size_Frame.Select.BackgroundTransparency = 0.8
+		end
+	end
+
+	local function RemoveFromSelection(obj)
+		MultiSelection[obj] = nil
+		local node = NodeMap[obj]
+		if node then
+			node.Frame.Size_Frame.Select.BackgroundTransparency = 1
+			node.Frame.Size_Frame.FastSelect.Visible = false
+		end
+		if obj == selectedObject then
+			SetHighlight(nil)
+			selectedObject = nil
+		end
+	end
+
+	local function UpdateDragVisual()
+		if DragSystem.IsDragging and DragSystem.VisualObj then
+			local mousePos = UserInputService:GetMouseLocation()
+			DragSystem.VisualObj.Position = UDim2.new(0, mousePos.X + 15, 0, mousePos.Y)
+		end
+
+		if InstanceSelectorState.Active then
+			local mousePos = UserInputService:GetMouseLocation()
+			InstanceSelectIcon.Visible = true
+			InstanceSelectIcon.Position = UDim2.new(0, mousePos.X + 10, 0, mousePos.Y + 10)
+		else
+			InstanceSelectIcon.Visible = false
+		end
+	end
+	RunService.RenderStepped:Connect(UpdateDragVisual)
+
+	local tweenInfo = TweenInfo.new(1.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1)
+	local tweenosos = TweenService:Create(LoadingIcon, tweenInfo, {Rotation = 360})
+
+	IsLoadingVal.Changed:Connect(function()
+		if IsLoadingVal.Value then
+			LoadingFrame.Visible = true
+			tweenosos:Play()
+		else
+			LoadingFrame.Visible = false
+			tweenosos:Cancel()
+		end
+	end)
+
+	local allCapabilities
+	pcall(function()
+		if SecurityCapabilities then
+			allCapabilities = SecurityCapabilities.new(table.unpack(Enum.SecurityCapability:GetEnumItems()))
+		end
+	end)
+
+	local gethiddenproperty = gethiddenproperty
+
+	local function GetProperties(obj)
+		if not obj then return {} end
+		local props = {}
+
+		local success, reflectedProps = pcall(function()
+			return ReflectionService:GetPropertiesOfClass(obj.ClassName, {
+				Security = allCapabilities, ExcludeInherited = false, ExcludeDisplay = false
+			})
+		end)
+
+		if success and reflectedProps then
+			for _, propDef in pairs(reflectedProps) do
+				local rawVal = nil
+				local readSuccess, result = pcall(function() return obj[propDef.Name] end)
+
+				if readSuccess then
+					rawVal = result
+					local strValue = tostring(result)
+					if typeof(result) == "Color3" then
+						strValue = string.format("[%d, %d, %d]", result.R*255, result.G*255, result.B*255)
+					elseif typeof(result) == "Vector3" then
+						strValue = string.format("%.3f, %.3f, %.3f", result.X, result.Y, result.Z)
+					end
+					table.insert(props, {
+						ClassName = "Properties", 
+						Name = propDef.Name, 
+						Value = strValue,
+						RawValue = rawVal
+					})
+				end
+			end
+			table.sort(props, function(a,b) return a.Name < b.Name end)
+			return props
+		else
+			return {{ClassName = "DexErr", Name = "Properties", Value = "Locked/Error", RawValue = nil}}
+		end
+	end
+
+	local creatableInstances = {}
+	local allClasses = ReflectionService:GetClasses()
+	for _, classInfo in pairs(allClasses) do
+		if classInfo.Permits and classInfo.Permits.New then table.insert(creatableInstances, classInfo.Name) end
+	end
+	table.sort(creatableInstances)
+
+	local IconMap = {
+		Hole=0,Beam=96,WeldConstraint=94,CylindricalConstraint=95,BindableFunction=66,BindableEvent=67,
+		TouchTransmitter=37,ForceField=37,Hat=45,Accessory=32,Attachment=81,BallSocketConstraint=86,RopeConstraint=89,
+		RodConstraint=90,SpringConstraint=91,HingeConstraint=87,PrismaticConstraint=88,Weld=34,PackageLink=34,
+		ClickDetector=41,Smoke=59,ParticleEmitter=80,Sparkles=42,Explosion=36,Fire=61,Seat=35,Platform=35,
+		SkateboardPlatform=35,VehicleSeat=35,Tool=17,Flag=38,FlagStand=39,Decal=7,JointInstance=34,Message=33,
+		Hint=33,IntValue=4,RayValue=4,IntConstrainedValue=4,DoubleConstrainedValue=4,BoolValue=4,CustomEvent=4,
+		CustomEventReceiver=4,TextureTrail=4,FloorWire=4,NumberValue=4,StringValue=4,Vector3Value=4,CFrameValue=4,
+		Color3Value=4,BrickColorValue=4,ObjectValue=4,SpecialMesh=8,BlockMesh=8,CylinderMesh=8,Texture=10,Sound=11,
+		EchoSoundEffect=84,FlangeSoundEffect=84,DistortionSoundEffect=84,PitchShiftSoundEffect=84,ChorusSoundEffect=84,
+		TremoloSoundEffect=84,ReverbSoundEffect=84,EqualizerSoundEffect=84,CompressorSoundEffect=84,SoundGroup=85,
+		SoundService=31,Backpack=20,StarterPack=20,StarterPlayer=79,StarterGear=20,CoreGui=46,PluginGuiService=46,
+		UIGradient=26,UICorner=26,UIScale=26,UIPadding=26,UITableLayout=26,UIPageLayout=26,UIListLayout=26,
+		UIGridLayout=26,UISizeConstraint=26,UITextSizeConstraint=26,UIAspectRatioConstraint=26,StarterGui=46,Chat=33,
+		ChatService=33,LocalizationService=92,MarketplaceService=46,Sky=28,ColorCorrectionEffect=83,BloomEffect=83,
+		BlurEffect=83,SunRaysEffect=83,Humanoid=9,Shirt=43,Pants=44,ShirtGraphic=40,BodyGyro=14,BodyPosition=14,
+		RocketPropulsion=14,BodyVelocity=14,BodyAngularVelocity=14,BodyForce=14,BodyThrust=14,Teams=23,Team=24,
+		Trail=93,SpawnLocation=25,NetworkClient=16,NetworkServer=15,Script=6,LocalScript=18,NetworkReplicator=29,
+		Model=2,Status=2,HopperBin=22,Camera=5,Players=21,ReplicatedStorage=70,ReplicatedFirst=70,ServerStorage=69,
+		ServerScriptService=71,Lighting=13,TestService=68,Debris=30,Accoutrement=32,Player=12,Workspace=19,Part=1,
+		TrussPart=1,WedgePart=1,PrismPart=1,PyramidPart=1,ParallelRampPart=1,RightAngleRampPart=1,
+		CornerWedgePart=1,PlayerGui=46,PlayerScripts=78,StarterPlayerScripts=78,StarterCharacterScripts=78,
+		GuiMain=47,ScreenGui=47,BillboardGui=64,SurfaceGui=64,Frame=48,ScrollingFrame=48,ImageLabel=49,
+		TextLabel=50,TextButton=51,TextBox=51,GuiButton=52,ImageButton=52,Handles=53,ArcHandles=56,
+		SelectionBox=54,SelectionSphere=54,SurfaceSelection=55,Configuration=58,HumanoidDescription=104,
+		NoCollisionConstraint=105,Folder=77,SelectionPartLasso=57,SelectionPointLasso=57,PartPairLasso=57,
+		Pose=60,Keyframe=60,Animation=60,AnimationTrack=60,AnimationController=60,CharacterMesh=60,Dialog=62,
+		DialogChoice=63,UnionOperation=73,NegateOperation=72,MeshPart=73,Terrain=65,PointLight=13,SpotLight=13,
+		SurfaceLight=13,RemoteFunction=74,RemoteEvent=75,TerrainRegion=65,ModuleScript=76,LocalizationTable=97
+	}
+	local function displayClassIcon(image: ImageLabel, className: string)
+		local index = IconMap[className] or 0
+		image.ImageContent = getIconContent(index)
+	end
+
+
+	local function updateInsertList(list, parentObj)
+
+		for _, v in pairs(InsertScroll:GetChildren()) do if v.ClassName ~= "UIGridLayout" then v:Destroy() end end
+		task.spawn(function()
+			local connections = {}
+			for i, v in list do
+				local clone = Templates.GetInsertItem()
+				displayClassIcon(clone.Type_Img, v)
+				clone.Ins_Name.Text = v
+				clone.Parent = InsertScroll
+				table.insert(connections,clone.Insertbutton.MouseButton1Click:Connect(function()
+					pcall(function() Instance.new(v, parentObj) end)
+					for i,v in connections do
+						v:Disconnect()
+					end
+					InsertFrame.Visible = false
+				end))
+				if i % 50 == 0 then RunService.RenderStepped:Wait() end
+			end
+
+			InsertScroll.CanvasSize = UDim2.new(0,0,0, #list * 24)
+		end)
+	end
+
+	local function displayInsertMenu(obj)
+		InsertFrame.Visible = true
+		local pos = UserInputService:GetMouseLocation()
+		InsertFrame.Position = UDim2.new(0, pos.X-InsertFrame.AbsoluteSize.X, 0, pos.Y)
+		updateInsertList(creatableInstances, obj)
+	end
+	InsertClose.MouseButton1Click:Connect(function() InsertFrame.Visible = false end)
+	InsertSearch.FocusLost:Connect(function(enter)
+		if enter then
+			local list = {}
+			local text = InsertSearch.Text
+			for _, v in pairs(creatableInstances) do
+				if string.find(string.lower(v), string.lower(text)) then table.insert(list, v) end
+			end
+			updateInsertList(list, nil)
+		end
+	end)
+
+	local ContextMaid = Janitor.new()
+
+	local function CloseContext()
+		ContextMenu.Visible = false
+		ContextMaid:Clean()
+	end
+
+	UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if ContextMenu.Visible then
+				local mPos = UserInputService:GetMouseLocation()
+				local fPos = ContextMenu.AbsolutePosition+IncestVector
+				local fSize = ContextMenu.AbsoluteSize
+				if mPos.X < fPos.X or mPos.X > fPos.X + fSize.X or mPos.Y < fPos.Y or mPos.Y > fPos.Y + fSize.Y then
+					CloseContext()
+				end
+			end
+			if EnumFrame.Visible then
+				local mPos = UserInputService:GetMouseLocation()
+				local fPos = EnumFrame.AbsolutePosition+IncestVector
+				local fSize = EnumFrame.AbsoluteSize
+				if mPos.X < fPos.X or mPos.X > fPos.X + fSize.X or mPos.Y < fPos.Y or mPos.Y > fPos.Y + fSize.Y then
+					EnumFrame.Visible = false
+				end
+			end
+			if ColorPickerFrame.Visible then
+				local mPos = UserInputService:GetMouseLocation()
+				local fPos = ColorPickerFrame.AbsolutePosition+IncestVector
+				local fSize = ColorPickerFrame.AbsoluteSize
+				if mPos.X < fPos.X or mPos.X > fPos.X + fSize.X or mPos.Y < fPos.Y or mPos.Y > fPos.Y + fSize.Y then
+					ColorPickerFrame.Visible = false
+				end
+			end
+			if BCFrame.Visible then
+				local mPos = UserInputService:GetMouseLocation()
+				local fPos = BCFrame.AbsolutePosition+IncestVector
+				local fSize = BCFrame.AbsoluteSize
+				if mPos.X < fPos.X or mPos.X > fPos.X + fSize.X or mPos.Y < fPos.Y or mPos.Y > fPos.Y + fSize.Y then
+					BCFrame.Visible = false
+				end
+			end
+		end
+	end)
+
+	local function openContextMenu(obj)
+		CloseContext()
+		if not obj then return end
+
+		local pos = UserInputService:GetMouseLocation()
+		ContextMenu.Position = UDim2.new(0, pos.X, 0, pos.Y)
+		ContextMenu.Visible = true
+
+		for _, v in pairs(ContextMenu:GetChildren()) do
+			if v:IsA("TextButton") or v.Name == "Separator" then v:Destroy() end
+		end
+
+		local order = 0
+		local function Add(text, shortcut, callback)
+			order += 1
+			local btn = CreateContextBtn(text, shortcut, order)
+			btn.Parent = ContextMenu
+			ContextMaid:Add(btn.MouseButton1Click:Connect(function()
+				CloseContext()
+				callback()
+			end))
+		end
+		local function Sep()
+			order += 1
+			local s = CreateSeparator(order)
+			s.Parent = ContextMenu
+		end
+
+		Add("Cut", "Ctrl+X", function()
+			table.clear(Clipboard)
+			local targets = {}
+			if MultiSelection[obj] then
+				for o, _ in pairs(MultiSelection) do table.insert(targets, o) end
+			else
+				table.insert(targets, obj)
+			end
+
+			for _, t in ipairs(targets) do
+				pcall(function() 
+					table.insert(Clipboard, t:Clone())
+					t:Destroy() 
+				end)
+			end
+		end)
+
+		Add("Copy", "Ctrl+C", function()
+			table.clear(Clipboard)
+			local targets = {}
+			if MultiSelection[obj] then
+				for o, _ in pairs(MultiSelection) do table.insert(targets, o) end
+			else
+				table.insert(targets, obj)
+			end
+
+			for _, t in ipairs(targets) do
+				pcall(function() 
+					table.insert(Clipboard, t:Clone())
+				end)
+			end
+		end)
+
+		if #Clipboard > 0 then
+			Add("Paste Into", "Ctrl+Shift+V", function()
+				for _, c in ipairs(Clipboard) do
+					pcall(function()
+						local clone = c:Clone()
+						clone.Parent = obj
+					end)
+				end
+			end)
+		end
+
+		Add("Duplicate", "Ctrl+D", function()
+			local targets = {}
+			if MultiSelection[obj] then
+				for o, _ in pairs(MultiSelection) do table.insert(targets, o) end
+			else
+				table.insert(targets, obj)
+			end
+
+			for _, t in ipairs(targets) do
+				pcall(function()
+					local c = t:Clone()
+					c.Parent = t.Parent
+				end)
+			end
+		end)
+
+		Add("Delete", "Del", function()
+			if MultiSelection[obj] then
+				for selected, _ in pairs(MultiSelection) do
+					pcall(function() selected:Destroy() end)
+				end
+			else
+				pcall(function() obj:Destroy() end)
+			end
+		end)
+
+		Add("Rename", "F2", function()
+			RenameFrame.Visible = true
+			RenameBox.Text = obj.Name
+			RenameBox:CaptureFocus()
+
+			local renameConn
+			renameConn = RenameBox.FocusLost:Connect(function(enter)
+				if enter then
+					local newName = RenameBox.Text
+					if MultiSelection[obj] then
+						for o, _ in pairs(MultiSelection) do
+							pcall(function() o.Name = newName end)
+						end
+					else
+						pcall(function() obj.Name = newName end)
+					end
+				end
+				RenameFrame.Visible = false
+				renameConn:Disconnect()
+			end)
+		end)
+
+		Sep()
+
+		Add("Group as Model", "Ctrl+G", function()
+			pcall(function()
+				local m = Instance.new("Model")
+				m.Name = "Model"
+				m.Parent = obj.Parent
+
+				if MultiSelection[obj] then
+					for o, _ in pairs(MultiSelection) do
+						o.Parent = m
+					end
+				else
+					obj.Parent = m
+				end
+			end)
+		end)
+
+		Add("Group as Folder", "Alt+Ctrl+G", function()
+			pcall(function()
+				local f = Instance.new("Folder")
+				f.Name = "Folder"
+				f.Parent = obj.Parent
+
+				if MultiSelection[obj] then
+					for o, _ in pairs(MultiSelection) do
+						o.Parent = f
+					end
+				else
+					obj.Parent = f
+				end
+			end)
+		end)
+
+		Sep()
+
+		Add("Insert Object...", "", function()
+			displayInsertMenu(obj)
+		end)
+
+		Sep()
+
+		Add("Copy Asset ID", "", function()
+			if obj:IsA("Texture") or obj:IsA("Decal") or obj:IsA("MeshPart") then
+				setclipboard(tostring(obj.Texture or obj.TextureID or ""))
+			end
+		end)
+
+		local YSize = 0
+		for _, v in pairs(ContextMenu:GetChildren()) do if v:IsA("GuiObject") then YSize += v.AbsoluteSize.Y end end
+		ContextMenu.Size = UDim2.new(0, 200, 0, YSize)
+	end
+
+
+	local propertiesMaid = Janitor.new()
+
+	local function updateGuiProperties(object)
+		propertiesMaid:Clean()
+		for _, v in pairs(PropertiesScroll:GetChildren()) do 
+			if not v:IsA("UIGridLayout") then v:Destroy() end 
+		end
+
+		if not object then return end
+
+		local targetObjects = {}
+		if MultiSelection[object] then
+			for o, _ in pairs(MultiSelection) do table.insert(targetObjects, o) end
+		else
+			targetObjects = {object}
+		end
+
+		local function SetProperty(propName, value)
+			for _, o in pairs(targetObjects) do
+				pcall(function() o[propName] = value end)
+			end
+		end
+
+		local aggregatedProps = {}
+		local propCounters = {}
+		local propValueMap = {}
+
+		for _, obj in pairs(targetObjects) do
+			local pList = GetProperties(obj)
+			for _, p in pairs(pList) do
+				local n = p.Name
+				propCounters[n] = (propCounters[n] or 0) + 1
+
+				if not propValueMap[n] then
+					propValueMap[n] = {
+						Val = p.RawValue,
+						IsMixed = false,
+						OrigClass = obj.ClassName
+					}
+				else
+					if propValueMap[n].Val ~= p.RawValue then
+						propValueMap[n].IsMixed = true
+					end
+				end
+			end
+		end
+
+		local totalTargets = #targetObjects
+
+		for name, info in pairs(propValueMap) do
+			local category
+			if propCounters[name] == totalTargets then
+				category = "Common"
+			else
+				category = info.OrigClass
+			end
+
+			local displayVal = info.IsMixed and "..." or tostring(info.Val)
+			if typeof(info.Val) == "Color3" and not info.IsMixed then
+				displayVal = string.format("[%d, %d, %d]", info.Val.R*255, info.Val.G*255, info.Val.B*255)
+			elseif typeof(info.Val) == "Vector3" and not info.IsMixed then
+				displayVal = string.format("%.3f, %.3f, %.3f", info.Val.X, info.Val.Y, info.Val.Z)
+			end
+
+			table.insert(aggregatedProps, {
+				ClassName = category,
+				Name = name,
+				Value = displayVal,
+				RawValue = info.Val,
+				IsMixed = info.IsMixed
+			})
+		end
+
+		table.sort(aggregatedProps, function(a, b)
+			if a.ClassName == "Common" and b.ClassName ~= "Common" then return true end
+			if b.ClassName == "Common" and a.ClassName ~= "Common" then return false end
+			if a.ClassName < b.ClassName then return true end
+			if a.ClassName > b.ClassName then return false end
+			return a.Name < b.Name
+		end)
+
+		local currentCategory = nil
+		local layoutOrder = 0
+
+		for _, v in pairs(aggregatedProps) do
+			if v.ClassName ~= currentCategory then
+				currentCategory = v.ClassName
+				layoutOrder += 1
+
+				local cat = Templates.GetPropCategory()
+				cat.LayoutOrder = layoutOrder
+				cat.Name = "Cat_" .. v.ClassName
+				cat.Text.Text = v.ClassName
+				cat.Parent = PropertiesScroll
+				cat.Unpack.Rotation = 0
+
+				-- FIX #1: Use v.ClassName directly instead of currentCategory in the closure
+				local categoryName = v.ClassName
+				propertiesMaid:Add(cat.Unpack.MouseButton1Click:Connect(function()
+					local isExpanded = (cat.Unpack.Rotation == 0)
+					cat.Unpack.Rotation = isExpanded and -90 or 0
+					for _, child in pairs(PropertiesScroll:GetChildren()) do
+						if child:GetAttribute("Category") == categoryName then
+							child.Visible = not isExpanded
+						end
+					end
+					updatePropertiesScroll()
+				end))
+			end
+
+			layoutOrder += 1
+			local pItem = Templates.GetPropItem()
+			pItem.LayoutOrder = layoutOrder
+			pItem.Name = "Prop_" .. v.Name
+			pItem:SetAttribute("Category", v.ClassName)
+			pItem.OverName.Text = "  " .. v.Name
+			pItem.Parent = PropertiesScroll
+
+			local valType = typeof(v.RawValue)
+			local inputUI = nil
+
+			if valType == "boolean" then
+				-- FIX #2: Boolean checkbox with proper state tracking
+				inputUI = Instance.new("ImageButton")
+				inputUI.Size = UDim2.new(0, 16, 0, 16)
+				inputUI.Position = UDim2.new(0.42, 0, 0.15, 0)
+				inputUI.BackgroundColor3 = Theme.SecondaryBG
+				inputUI.BorderColor3 = Theme.Accent
+				inputUI.BorderSizePixel = 1
+				inputUI.Parent = pItem
+
+				local checkmark = Instance.new("Frame", inputUI)
+				checkmark.Size = UDim2.new(0.6, 0, 0.6, 0)
+				checkmark.Position = UDim2.new(0.2, 0, 0.2, 0)
+				checkmark.BackgroundColor3 = Theme.Accent
+				checkmark.BorderSizePixel = 0
+
+				if v.IsMixed then
+					checkmark.Visible = true
+					checkmark.BackgroundTransparency = 0.5
+				else
+					checkmark.Visible = v.RawValue
+				end
+
+				-- Create a table to track current state
+				local stateTracker = {
+					currentValue = v.RawValue,
+					isMixed = v.IsMixed
+				}
+
+				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
+					local newVal
+					if stateTracker.isMixed then 
+						newVal = true
+						stateTracker.isMixed = false
+					else 
+						newVal = not stateTracker.currentValue
+					end
+
+					SetProperty(v.Name, newVal)
+
+					-- Update tracked state
+					stateTracker.currentValue = newVal
+
+					-- Update UI
+					checkmark.Visible = newVal
+					checkmark.BackgroundTransparency = 0
+				end))
+
+				-- Property Change Signal - updates UI when property changes externally
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							-- Check if all selected objects have the same value
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local val = pcall(function() return o[v.Name] end)
+								if val then
+									if firstVal == nil then
+										firstVal = o[v.Name]
+									elseif firstVal ~= o[v.Name] then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame and firstVal ~= nil then
+								stateTracker.currentValue = firstVal
+								stateTracker.isMixed = false
+								checkmark.Visible = firstVal
+								checkmark.BackgroundTransparency = 0
+							else
+								stateTracker.isMixed = true
+								checkmark.Visible = true
+								checkmark.BackgroundTransparency = 0.5
+							end
+						end))
+					end
+				end
+
+			elseif valType == "EnumItem" then
+				inputUI = Instance.new("TextButton")
+				inputUI.Size = UDim2.new(0.6, -5, 1, -4)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 2)
+				inputUI.BackgroundColor3 = Theme.MainBG
+				inputUI.BorderColor3 = Theme.Border
+				inputUI.Text = v.IsMixed and "  <Mixed>" or ("  " .. tostring(v.RawValue))
+				inputUI.TextColor3 = v.IsMixed and Theme.TextDim or Theme.Text
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.Parent = pItem
+
+				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
+					EnumMaid:Clean()
+					EnumFrame.Visible = true
+					EnumMaid:Add(RunService.PreRender:Connect(function()
+						EnumFrame.Position = UDim2.fromOffset(inputUI.AbsolutePosition.X,inputUI.AbsolutePosition.Y+insetOffset+22)
+					end))
+
+					for _, child in pairs(EnumFrame:GetChildren()) do
+						if child:IsA("TextButton") then child:Destroy() end
+					end
+
+					local enumItems = Enum[tostring(v.RawValue.EnumType)]:GetEnumItems()
+					for _, item in pairs(enumItems) do
+						local btn = Instance.new("TextButton", EnumFrame)
+						btn.Size = UDim2.new(1, 0, 0, 20)
+						btn.BackgroundColor3 = Theme.MainBG
+						btn.BorderSizePixel = 0
+						btn.Text = tostring(item)
+						btn.TextColor3 = Theme.Text
+						btn.Font = Enum.Font.Gotham
+						btn.TextSize = 12
+						btn.ZIndex = 22
+
+						btn.MouseButton1Click:Connect(function()
+							SetProperty(v.Name, item)
+							EnumFrame.Visible = false
+							inputUI.Text = "  " .. tostring(item)
+							inputUI.TextColor3 = Theme.Text
+						end)
+
+						btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Theme.Accent end)
+						btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Theme.MainBG end)
+					end
+					EnumFrame.CanvasSize = UDim2.new(0,0,0, #enumItems * 20)
+					EnumFrame.Size = UDim2.fromOffset(inputUI.AbsoluteSize.X,math.min(6,#enumItems) * 20)
+				end))
+
+				-- Property Change Signal
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local success, val = pcall(function() return o[v.Name] end)
+								if success then
+									if firstVal == nil then
+										firstVal = val
+									elseif firstVal ~= val then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame and firstVal ~= nil then
+								inputUI.Text = "  " .. tostring(firstVal)
+								inputUI.TextColor3 = Theme.Text
+							else
+								inputUI.Text = "  <Mixed>"
+								inputUI.TextColor3 = Theme.TextDim
+							end
+						end))
+					end
+				end
+
+			elseif valType == "number" then
+				inputUI = Instance.new("TextBox")
+				inputUI.Size = UDim2.new(0.6, -5, 1, 0)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+				inputUI.BackgroundTransparency = 1
+				inputUI.Text = v.IsMixed and "" or v.Value
+				inputUI.PlaceholderText = v.IsMixed and "..." or ""
+				inputUI.TextColor3 = Theme.Accent
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.ClearTextOnFocus = false
+				inputUI.Parent = pItem
+
+
+				local shouldShowSlider = not v.IsMixed and ((v.RawValue >= 0 and v.RawValue <= 1) or 
+					(string.find(v.Name, "Transparency")) or 
+					(string.find(v.Name, "Reflectance")))
+
+				local sliderFill = nil
+				if shouldShowSlider then
+					local sliderFrame = Instance.new("Frame", pItem)
+					sliderFrame.Name = "SliderBar"
+					sliderFrame.BackgroundColor3 = Theme.Border
+					sliderFrame.BorderSizePixel = 0
+					sliderFrame.Position = UDim2.new(0.4, 2, 0.9, -2)
+					sliderFrame.Size = UDim2.new(0.6, -5, 0, 2)
+					sliderFrame.ZIndex = 2
+
+					sliderFill = Instance.new("Frame", sliderFrame)
+					sliderFill.Name = "Fill"
+					sliderFill.BackgroundColor3 = Theme.Accent
+					sliderFill.BorderSizePixel = 0
+					local ratio = math.clamp(v.RawValue, 0, 1)
+					sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+					sliderFill.ZIndex = 3
+
+					local sliderBtn = Instance.new("TextButton", sliderFrame)
+					sliderBtn.BackgroundTransparency = 1
+					sliderBtn.Size = UDim2.new(1,0,5,0)
+					sliderBtn.Position = UDim2.new(0,0,-2,0)
+					sliderBtn.Text = ""
+					sliderBtn.ZIndex = 4
+
+					local sliderDrag = Janitor.new()
+
+					sliderBtn.MouseButton1Down:Connect(function()
+						local dragging = true
+						local mouseMove 
+						local mouseUp
+
+						mouseMove = UserInputService.InputChanged:Connect(function(input)
+							if input.UserInputType == Enum.UserInputType.MouseMovement then
+								local relativeX = input.Position.X - sliderFrame.AbsolutePosition.X
+								local pct = math.clamp(relativeX / sliderFrame.AbsoluteSize.X, 0, 1)
+								SetProperty(v.Name, pct)
+								sliderFill.Size = UDim2.new(pct, 0, 1, 0)
+								inputUI.Text = string.format("%.3f", pct)
+							end
+						end)
+
+						mouseUp = UserInputService.InputEnded:Connect(function(input)
+							if input.UserInputType == Enum.UserInputType.MouseButton1 then
+								mouseMove:Disconnect()
+								mouseUp:Disconnect()
+							end
+						end)
+
+						local mLoc = UserInputService:GetMouseLocation()
+						local relativeX = mLoc.X - sliderFrame.AbsolutePosition.X
+						local pct = math.clamp(relativeX / sliderFrame.AbsoluteSize.X, 0, 1)
+						SetProperty(v.Name, pct)
+						sliderFill.Size = UDim2.new(pct, 0, 1, 0)
+						inputUI.Text = string.format("%.3f", pct)
+					end)
+
+					propertiesMaid:Add(function() sliderFrame:Destroy() end)
+				end
+
+				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+					if enter then
+						local num = tonumber(inputUI.Text) or 0
+						SetProperty(v.Name, num)
+					end
+				end))
+
+				-- Property Change Signal
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local success, val = pcall(function() return o[v.Name] end)
+								if success then
+									if firstVal == nil then
+										firstVal = val
+									elseif firstVal ~= val then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame and firstVal ~= nil then
+								if typeof(firstVal) == "number" then
+									inputUI.Text = string.format("%.3f", firstVal)
+									inputUI.PlaceholderText = ""
+									-- Update slider if exists
+									if sliderFill then
+										local ratio = math.clamp(firstVal, 0, 1)
+										sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+									end
+								end
+							else
+								inputUI.Text = ""
+								inputUI.PlaceholderText = "..."
+							end
+						end))
+					end
+				end
+
+			elseif valType == "Color3" then
+				inputUI = Instance.new("TextBox")
+				inputUI.Size = UDim2.new(0.4, 0, 1, 0)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+				inputUI.BackgroundTransparency = 1
+				inputUI.Text = v.IsMixed and "" or v.Value
+				inputUI.PlaceholderText = v.IsMixed and "..." or ""
+				inputUI.TextColor3 = Theme.Accent
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.ClearTextOnFocus = false
+				inputUI.Parent = pItem
+
+				local colorBtn = Instance.new("TextButton", pItem)
+				colorBtn.Position = UDim2.new(0.85, 0, 0.15, 0)
+				colorBtn.Size = UDim2.new(0, 16, 0, 16)
+				colorBtn.BackgroundColor3 = v.IsMixed and Color3.new(1,1,1) or v.RawValue
+				colorBtn.Text = ""
+				colorBtn.BorderColor3 = Theme.TextDim
+
+				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+					if enter then
+						local r, g, b = inputUI.Text:match("%[(%d+), (%d+), (%d+)%]")
+						if r and g and b then
+							SetProperty(v.Name, Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b)))
+						end
+					end
+				end))
+
+
+				propertiesMaid:Add(colorBtn.MouseButton1Click:Connect(function()
+					BrickColorMaid:Clean()
+					ColorMaid:Clean()
+					ColorPickerFrame.Visible = true
+
+					ColorMaid:Add(RunService.PreRender:Connect(function()
+						ColorPickerFrame.Position = UDim2.new(0, colorBtn.AbsolutePosition.X - 210, 0, colorBtn.AbsolutePosition.Y + insetOffset)
+					end))
+					local h, s, val = Color3.toHSV(v.IsMixed and Color3.new(1,1,1) or v.RawValue)
+					CP_CursorHue.Position = UDim2.new(1-h, 0, 0, 0) 
+					CP_CursorHue.ZIndex = 30
+					CP_CursorSV.Position = UDim2.new(s, 0, 1-val, 0)
+					CP_CursorSV.ZIndex = 30
+					CP_SV.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+
+					local function UpdateColor()
+						local hue = 1 - CP_CursorHue.Position.X.Scale
+						local sat = CP_CursorSV.Position.X.Scale
+						local value = 1 - CP_CursorSV.Position.Y.Scale
+						local newCol = Color3.fromHSV(hue, sat, value)
+						CP_SV.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+						SetProperty(v.Name, newCol)
+						colorBtn.BackgroundColor3 = newCol
+						inputUI.Text = string.format("[%d, %d, %d]", newCol.R*255, newCol.G*255, newCol.B*255)
+					end
+
+					ColorMaid:Add(CP_Hue.MouseButton1Down:Connect(function()
+						local move, up
+						move = UserInputService.InputChanged:Connect(function(inp)
+							if inp.UserInputType == Enum.UserInputType.MouseMovement then
+								local relX = math.clamp((inp.Position.X - CP_Hue.AbsolutePosition.X)/CP_Hue.AbsoluteSize.X, 0, 1)
+								CP_CursorHue.Position = UDim2.new(relX, 0, 0, 0)
+								UpdateColor()
+							end
+						end)
+						up = UserInputService.InputEnded:Connect(function(inp)
+							if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+								move:Disconnect()
+								up:Disconnect()
+							end
+						end)
+						local mLoc = UserInputService:GetMouseLocation()
+						local relX = math.clamp((mLoc.X - CP_Hue.AbsolutePosition.X)/CP_Hue.AbsoluteSize.X, 0, 1)
+						CP_CursorHue.Position = UDim2.new(relX, 0, 0, 0)
+						UpdateColor()
+					end))
+
+					ColorMaid:Add(CP_SV.MouseButton1Down:Connect(function()
+						local move, up
+						move = UserInputService.InputChanged:Connect(function(inp)
+							if inp.UserInputType == Enum.UserInputType.MouseMovement then
+								local relX = math.clamp((inp.Position.X - CP_SV.AbsolutePosition.X)/CP_SV.AbsoluteSize.X, 0, 1)
+								local relY = math.clamp((inp.Position.Y - CP_SV.AbsolutePosition.Y)/CP_SV.AbsoluteSize.Y, 0, 1)
+								CP_CursorSV.Position = UDim2.new(relX, 0, relY, 0)
+								UpdateColor()
+							end
+						end)
+						up = UserInputService.InputEnded:Connect(function(inp)
+							if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+								move:Disconnect()
+								up:Disconnect()
+							end
+						end)
+						local mLoc = UserInputService:GetMouseLocation()
+						local relX = math.clamp((mLoc.X - CP_SV.AbsolutePosition.X)/CP_SV.AbsoluteSize.X, 0, 1)
+						local relY = math.clamp((mLoc.Y - CP_SV.AbsolutePosition.Y - insetOffset)/CP_SV.AbsoluteSize.Y, 0, 1)
+						CP_CursorSV.Position = UDim2.new(relX, 0, relY, 0)
+						UpdateColor()
+					end))
+				end))
+
+				-- Property Change Signal
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local success, val = pcall(function() return o[v.Name] end)
+								if success then
+									if firstVal == nil then
+										firstVal = val
+									elseif firstVal ~= val then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame and firstVal ~= nil then
+								if typeof(firstVal) == "Color3" then
+									colorBtn.BackgroundColor3 = firstVal
+									inputUI.Text = string.format("[%d, %d, %d]", firstVal.R*255, firstVal.G*255, firstVal.B*255)
+									inputUI.PlaceholderText = ""
+								end
+							else
+								colorBtn.BackgroundColor3 = Color3.new(1,1,1)
+								inputUI.Text = ""
+								inputUI.PlaceholderText = "..."
+							end
+						end))
+					end
+				end
+
+			elseif valType == "BrickColor" then
+				inputUI = Instance.new("TextButton")
+				inputUI.Size = UDim2.new(0.6, -5, 1, -4)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 2)
+				inputUI.BackgroundColor3 = Theme.MainBG
+				inputUI.BorderColor3 = Theme.Border
+				inputUI.Text = v.IsMixed and "  <Mixed>" or ("  " .. tostring(v.RawValue))
+				inputUI.TextColor3 = v.IsMixed and Theme.TextDim or v.RawValue.Color
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.Parent = pItem
+
+				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
+					BrickColorMaid:Clean()
+					ColorMaid:Clean()
+					BCFrame.Visible = true
+					BrickColorMaid:Add(RunService.PreRender:Connect(function()
+						BCFrame.Position = UDim2.new(0, inputUI.AbsolutePosition.X - 220, 0, inputUI.AbsolutePosition.Y + insetOffset)
+					end))
+
+					for i = 0, 127 do
+						local bc = BrickColor.palette(i)
+						local btn
+						if not BCScroll:FindFirstChild(tostring(i)) then
+							btn = Instance.new("TextButton", BCScroll)
+							btn.BackgroundColor3 = bc.Color
+							btn.Text = ""
+							btn.ZIndex = 30
+							btn.Name = tostring(i)
+							btn.BorderSizePixel = 0
+						else 
+							btn = BCScroll:FindFirstChild(tostring(i))
+						end
+						BrickColorMaid:Add(btn.MouseButton1Click:Connect(function()
+							SetProperty(v.Name, bc)
+							BrickColorMaid:Clean()
+							BCFrame.Visible = false
+							inputUI.Text = "  " .. tostring(bc)
+							inputUI.TextColor3 = bc.Color
+						end))
+						local tt = Instance.new("TextLabel", btn)
+						tt.Visible = false
+						BrickColorMaid:Add(btn.MouseEnter:Connect(function() tt.Visible = true end))
+						BrickColorMaid:Add(btn.MouseLeave:Connect(function() tt.Visible = false end))
+					end
+					BCScroll.CanvasSize = UDim2.new(0,0,0, math.ceil(128/10) * 21)
+				end))
+
+				-- Property Change Signal
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local success, val = pcall(function() return o[v.Name] end)
+								if success then
+									if firstVal == nil then
+										firstVal = val
+									elseif firstVal ~= val then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame and firstVal ~= nil then
+								if typeof(firstVal) == "BrickColor" then
+									inputUI.Text = "  " .. tostring(firstVal)
+									inputUI.TextColor3 = firstVal.Color
+								end
+							else
+								inputUI.Text = "  <Mixed>"
+								inputUI.TextColor3 = Theme.TextDim
+							end
+						end))
+					end
+				end
+
+			elseif valType == "Instance" or (valType == "userdata" and typeof(v.RawValue) == "Instance") or (v.Name == "Parent") or (string.match(v.Name, "Value") and valType=="nil" and v.ClassName=="ObjectValue") then
+				inputUI = Instance.new("TextButton")
+				inputUI.Size = UDim2.new(0.6, -5, 1, -4)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 2)
+				inputUI.BackgroundColor3 = Theme.MainBG
+				inputUI.BorderColor3 = Theme.Border
+				if v.IsMixed then
+					inputUI.Text = "  <Mixed>"
+				else
+					inputUI.Text = v.RawValue and ("  " .. v.RawValue.Name) or "  nil"
+				end
+				inputUI.TextColor3 = Theme.Accent
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.Parent = pItem
+
+				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
+					InstanceSelectorState.Active = true
+					InstanceSelectorState.Object = object
+					InstanceSelectorState.PropName = v.Name
+					inputUI.Text = "  (Select in Explorer)"
+				end))
+
+				-- Property Change Signal
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local success, val = pcall(function() return o[v.Name] end)
+								if success then
+									if firstVal == nil then
+										firstVal = val
+									elseif firstVal ~= val then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame then
+								if firstVal ~= nil and typeof(firstVal) == "Instance" then
+									inputUI.Text = "  " .. firstVal.Name
+								elseif firstVal == nil then
+									inputUI.Text = "  nil"
+								end
+							else
+								inputUI.Text = "  <Mixed>"
+							end
+						end))
+					end
+				end
+
+			elseif valType == "string" or valType == "Vector3" then
+				inputUI = Instance.new("TextBox")
+				inputUI.Size = UDim2.new(0.6, -5, 1, 0)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+				inputUI.BackgroundTransparency = 1
+				inputUI.Text = v.IsMixed and "" or v.Value
+				inputUI.PlaceholderText = v.IsMixed and "..." or ""
+				inputUI.TextColor3 = Theme.Accent
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.ClearTextOnFocus = false
+				inputUI.Parent = pItem
+
+				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+					if enter then
+						if valType == "Vector3" then
+							local vec = ParseVector3(inputUI.Text)
+							if vec then SetProperty(v.Name, vec) end
+						else
+							SetProperty(v.Name, inputUI.Text)
+						end
+					end
+				end))
+
+				-- Property Change Signal
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(function()
+							local firstVal = nil
+							local allSame = true
+							for _, o in pairs(targetObjects) do
+								local success, val = pcall(function() return o[v.Name] end)
+								if success then
+									if firstVal == nil then
+										firstVal = val
+									elseif firstVal ~= val then
+										allSame = false
+										break
+									end
+								end
+							end
+
+							if allSame and firstVal ~= nil then
+								if typeof(firstVal) == "Vector3" then
+									inputUI.Text = string.format("%.3f, %.3f, %.3f", firstVal.X, firstVal.Y, firstVal.Z)
+								elseif typeof(firstVal) == "string" then
+									inputUI.Text = firstVal
+								end
+								inputUI.PlaceholderText = ""
+							else
+								inputUI.Text = ""
+								inputUI.PlaceholderText = "..."
+							end
+						end))
+					end
+				end
+
+			else
+				inputUI = Instance.new("TextLabel")
+				inputUI.Size = UDim2.new(0.6, -5, 1, 0)
+				inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+				inputUI.BackgroundTransparency = 1
+				inputUI.Text = v.IsMixed and "..." or v.Value
+				inputUI.TextColor3 = Theme.TextDim
+				inputUI.Font = Enum.Font.Gotham
+				inputUI.TextSize = 12
+				inputUI.TextXAlignment = Enum.TextXAlignment.Left
+				inputUI.Parent = pItem
+			end
+		end
+
+		local attrList = {}
+		for _, obj in pairs(targetObjects) do
+			local success, attrs = pcall(function() return obj:GetAttributes() end)
+			if success and attrs then
+				for attrName, attrValue in pairs(attrs) do
+					if not attrList[attrName] then
+						attrList[attrName] = {
+							Val = attrValue,
+							IsMixed = false
+						}
+					else
+						if attrList[attrName].Val ~= attrValue then
+							attrList[attrName].IsMixed = true
+						end
+					end
+				end
+			end
+		end
+
+		local hasAttributes = false
+		for _ in pairs(attrList) do hasAttributes = true break end
+
+		if hasAttributes then
+			local attrCategory = Templates.GetPropCategory()
+			attrCategory.Name = "Cat_Attributes"
+			attrCategory.Text.Text = "  ATTRIBUTES"
+			attrCategory.LayoutOrder = 9999
+			attrCategory.Parent = PropertiesScroll
+
+			propertiesMaid:Add(attrCategory.Unpack.MouseButton1Click:Connect(function()
+				if attrCategory.Unpack.Rotation == -90 then
+					attrCategory.Unpack.Rotation = 0
+					for _, child in pairs(PropertiesScroll:GetChildren()) do
+						if child:IsA("Frame") and child:GetAttribute("Category") == "Attributes" then
+							child.Visible = true
+						end
+					end
+				else
+					attrCategory.Unpack.Rotation = -90
+					for _, child in pairs(PropertiesScroll:GetChildren()) do
+						if child:IsA("Frame") and child:GetAttribute("Category") == "Attributes" then
+							child.Visible = false
+						end
+					end
+				end
+				updatePropertiesScroll()
+			end))
+
+			local sortedAttrs = {}
+			for name, data in pairs(attrList) do
+				table.insert(sortedAttrs, {Name = name, Data = data})
+			end
+			table.sort(sortedAttrs, function(a, b) return a.Name < b.Name end)
+
+			for _, attrInfo in ipairs(sortedAttrs) do
+				local attrName = attrInfo.Name
+				local attrData = attrInfo.Data
+
+				local pItem = Templates.GetPropItem()
+				pItem.Name = "Prop_" .. attrName
+				pItem:SetAttribute("Category", "Attributes")
+				pItem.LayoutOrder = 9999 + _ 
+				pItem.Parent = PropertiesScroll
+				pItem.Visible = true
+
+				local overName = pItem.OverName
+				overName.Text = "  " .. attrName
+				overName.TextColor3 = Color3.fromRGB(255, 200, 100)
+
+				local valType = typeof(attrData.Val)
+				local inputUI
+
+				if valType == "boolean" then
+					inputUI = Instance.new("TextButton")
+					inputUI.Size = UDim2.new(0.6, -5, 1, -4)
+					inputUI.Position = UDim2.new(0.4, 2, 0, 2)
+					inputUI.BackgroundColor3 = Theme.MainBG
+					inputUI.BorderColor3 = Theme.Border
+					if attrData.IsMixed then
+						inputUI.Text = "  <Mixed>"
+						inputUI.TextColor3 = Theme.TextDim
+					else
+						inputUI.Text = "  " .. tostring(attrData.Val)
+						inputUI.TextColor3 = attrData.Val and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
+					end
+					inputUI.Font = Enum.Font.Gotham
+					inputUI.TextSize = 12
+					inputUI.TextXAlignment = Enum.TextXAlignment.Left
+					inputUI.Parent = pItem
+
+					propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
+						local newVal = not (attrData.IsMixed and true or attrData.Val)
+						for _, obj in pairs(targetObjects) do
+							pcall(function() obj:SetAttribute(attrName, newVal) end)
+						end
+						inputUI.Text = "  " .. tostring(newVal)
+						inputUI.TextColor3 = newVal and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
+					end))
+
+					for _, obj in pairs(targetObjects) do
+						local success, sig = pcall(function()
+							return obj:GetAttributeChangedSignal(attrName)
+						end)
+						if success and sig then
+							propertiesMaid:Add(sig:Connect(function()
+								local firstVal = nil
+								local allSame = true
+								for _, o in pairs(targetObjects) do
+									local success, val = pcall(function() return o:GetAttribute(attrName) end)
+									if success then
+										if firstVal == nil then
+											firstVal = val
+										elseif firstVal ~= val then
+											allSame = false
+											break
+										end
+									end
+								end
+
+								if allSame and firstVal ~= nil then
+									inputUI.Text = "  " .. tostring(firstVal)
+									inputUI.TextColor3 = firstVal and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
+								else
+									inputUI.Text = "  <Mixed>"
+									inputUI.TextColor3 = Theme.TextDim
+								end
+							end))
+						end
+					end
+
+				elseif valType == "number" then
+					inputUI = Instance.new("TextBox")
+					inputUI.Size = UDim2.new(0.6, -5, 1, 0)
+					inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+					inputUI.BackgroundTransparency = 1
+					inputUI.Text = attrData.IsMixed and "" or tostring(attrData.Val)
+					inputUI.PlaceholderText = attrData.IsMixed and "..." or ""
+					inputUI.TextColor3 = Color3.fromRGB(255, 200, 100)
+					inputUI.Font = Enum.Font.Gotham
+					inputUI.TextSize = 12
+					inputUI.TextXAlignment = Enum.TextXAlignment.Left
+					inputUI.ClearTextOnFocus = false
+					inputUI.Parent = pItem
+
+					propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+						if enter then
+							local num = tonumber(inputUI.Text)
+							if num then
+								for _, obj in pairs(targetObjects) do
+									pcall(function() obj:SetAttribute(attrName, num) end)
+								end
+							end
+						end
+					end))
+
+					for _, obj in pairs(targetObjects) do
+						local success, sig = pcall(function()
+							return obj:GetAttributeChangedSignal(attrName)
+						end)
+						if success and sig then
+							propertiesMaid:Add(sig:Connect(function()
+								local firstVal = nil
+								local allSame = true
+								for _, o in pairs(targetObjects) do
+									local success, val = pcall(function() return o:GetAttribute(attrName) end)
+									if success then
+										if firstVal == nil then
+											firstVal = val
+										elseif firstVal ~= val then
+											allSame = false
+											break
+										end
+									end
+								end
+
+								if allSame and firstVal ~= nil then
+									inputUI.Text = tostring(firstVal)
+									inputUI.PlaceholderText = ""
+								else
+									inputUI.Text = ""
+									inputUI.PlaceholderText = "..."
+								end
+							end))
+						end
+					end
+
+				elseif valType == "string" or valType == "Vector3" or valType == "Vector2" or valType == "Color3" or valType == "UDim2" then
+					inputUI = Instance.new("TextBox")
+					inputUI.Size = UDim2.new(0.6, -5, 1, 0)
+					inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+					inputUI.BackgroundTransparency = 1
+
+					local displayText = ""
+					if not attrData.IsMixed then
+						if valType == "Vector3" then
+							displayText = string.format("%.3f, %.3f, %.3f", attrData.Val.X, attrData.Val.Y, attrData.Val.Z)
+						elseif valType == "Vector2" then
+							displayText = string.format("%.3f, %.3f", attrData.Val.X, attrData.Val.Y)
+						elseif valType == "Color3" then
+							displayText = string.format("[%d, %d, %d]", attrData.Val.R*255, attrData.Val.G*255, attrData.Val.B*255)
+						elseif valType == "UDim2" then
+							displayText = string.format("{%.3f, %.3f}, {%.3f, %.3f}", attrData.Val.X.Scale, attrData.Val.X.Offset, attrData.Val.Y.Scale, attrData.Val.Y.Offset)
+						else
+							displayText = tostring(attrData.Val)
+						end
+					end
+
+					inputUI.Text = attrData.IsMixed and "" or displayText
+					inputUI.PlaceholderText = attrData.IsMixed and "..." or ""
+					inputUI.TextColor3 = Theme.Accent
+					inputUI.Font = Enum.Font.Gotham
+					inputUI.TextSize = 12
+					inputUI.TextXAlignment = Enum.TextXAlignment.Left
+					inputUI.ClearTextOnFocus = false
+					inputUI.Parent = pItem
+
+					propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+						if enter then
+							local text = inputUI.Text
+							if valType == "Vector3" then
+								local vec = ParseVector3(text)
+								if vec then
+									for _, obj in pairs(targetObjects) do
+										pcall(function() obj:SetAttribute(attrName, vec) end)
+									end
+								end
+							elseif valType == "Vector2" then
+								local x, y = text:match("([^,]+),%s*([^,]+)")
+								if x and y then
+									local vec = Vector2.new(tonumber(x) or 0, tonumber(y) or 0)
+									for _, obj in pairs(targetObjects) do
+										pcall(function() obj:SetAttribute(attrName, vec) end)
+									end
+								end
+							elseif valType == "Color3" then
+								local r, g, b = text:match("%[(%d+),%s*(%d+),%s*(%d+)%]")
+								if r and g and b then
+									local col = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
+									for _, obj in pairs(targetObjects) do
+										pcall(function() obj:SetAttribute(attrName, col) end)
+									end
+								end
+							else
+								for _, obj in pairs(targetObjects) do
+									pcall(function() obj:SetAttribute(attrName, text) end)
+								end
+							end
+						end
+					end))
+
+					for _, obj in pairs(targetObjects) do
+						local success, sig = pcall(function()
+							return obj:GetAttributeChangedSignal(attrName)
+						end)
+						if success and sig then
+							propertiesMaid:Add(sig:Connect(function()
+								local firstVal = nil
+								local allSame = true
+								for _, o in pairs(targetObjects) do
+									local success, val = pcall(function() return o:GetAttribute(attrName) end)
+									if success then
+										if firstVal == nil then
+											firstVal = val
+										elseif firstVal ~= val then
+											allSame = false
+											break
+										end
+									end
+								end
+
+								if allSame and firstVal ~= nil then
+									local displayText = ""
+									if typeof(firstVal) == "Vector3" then
+										displayText = string.format("%.3f, %.3f, %.3f", firstVal.X, firstVal.Y, firstVal.Z)
+									elseif typeof(firstVal) == "Vector2" then
+										displayText = string.format("%.3f, %.3f", firstVal.X, firstVal.Y)
+									elseif typeof(firstVal) == "Color3" then
+										displayText = string.format("[%d, %d, %d]", firstVal.R*255, firstVal.G*255, firstVal.B*255)
+									elseif typeof(firstVal) == "UDim2" then
+										displayText = string.format("{%.3f, %.3f}, {%.3f, %.3f}", firstVal.X.Scale, firstVal.X.Offset, firstVal.Y.Scale, firstVal.Y.Offset)
+									else
+										displayText = tostring(firstVal)
+									end
+									inputUI.Text = displayText
+									inputUI.PlaceholderText = ""
+								else
+									inputUI.Text = ""
+									inputUI.PlaceholderText = "..."
+								end
+							end))
+						end
+					end
+				else
+					inputUI = Instance.new("TextLabel")
+					inputUI.Size = UDim2.new(0.6, -5, 1, 0)
+					inputUI.Position = UDim2.new(0.4, 2, 0, 0)
+					inputUI.BackgroundTransparency = 1
+					inputUI.Text = attrData.IsMixed and "..." or tostring(attrData.Val)
+					inputUI.TextColor3 = Theme.TextDim
+					inputUI.Font = Enum.Font.Gotham
+					inputUI.TextSize = 12
+					inputUI.TextXAlignment = Enum.TextXAlignment.Left
+					inputUI.Parent = pItem
+				end
+			end
+		end
+
+		updatePropertiesScroll()
+	end
+
+	local function createNode(obj, offset, parentPrefix)
+		if not obj then return end
+		if NodeMap[obj] then return NodeMap[obj] end
+
+		local maid = Janitor.new()
+		local clone = Templates.GetExplorerItem()
+		local sizeFrame = clone.Size_Frame
+		local unpackBtn = sizeFrame.Unpack
+		local isopen = sizeFrame.IsOpen
+		local uniqueId = tostring(math.random(1e8, 1e9-1))
+		local Name = numberToLetters(1e8-#obj:GetChildren())
+		local thisPrefix
+		if parentPrefix == "" then
+			thisPrefix = "_" .. Name
+		else
+			thisPrefix = parentPrefix .. "_" .. Name
+		end
+		thisPrefix = thisPrefix .. "_" .. uniqueId
+		clone.Name = thisPrefix
+
+		sizeFrame.Nam.Text = tostring(obj.Name)
+		sizeFrame.Position = UDim2.new(0, offset, 0, 0)
+		sizeFrame.Insert.Position = UDim2.new(0, GetTextSize(sizeFrame.Nam).X + 45, 0.15, 0)
+		displayClassIcon(sizeFrame.Type_Img, obj.ClassName)
+
+		clone.Parent = ExplorerScroll
+
+		local dataC = {Frame = clone, Maid = maid, Prefix = thisPrefix,VisibleChildren={},expand = function()
+			isopen.Value = true
+			unpackBtn.Rotation = 0
+		end}
+		NodeMap[obj] = dataC
+		local VisibleChildren = dataC.VisibleChildren
+
+		local function checkChildren()
+			if #obj:GetChildren() > 0 then
+				unpackBtn.Visible = true
+			else
+				unpackBtn.Visible = false
+				unpackBtn.Rotation = -90
+				isopen.Value = false
+			end
+		end
+		local function cleanChildren(parentData)
+			for child, data in parentData.VisibleChildren do
+				data.Maid:Destroy()
+				data.Frame:Destroy()
+				NodeMap[child] = nil
+				cleanChildren(data)
+				parentData.VisibleChildren[child] = nil
+			end
+		end
+
+		checkChildren()
+
+		maid:Add(sizeFrame.Select.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+				local startPos = input.Position
+				local dragMaid = Janitor.new()
+
+				local moved = false
+
+				dragMaid:Add(UserInputService.InputChanged:Connect(function(moveInput)
+					if moveInput.UserInputType == Enum.UserInputType.MouseMovement then
+						local dist = (Vector2.new(moveInput.Position.X, moveInput.Position.Y) - Vector2.new(startPos.X, startPos.Y)).Magnitude
+						if dist > 6 then
+							moved = true
+							if not DragSystem.IsDragging then
+								DragSystem.IsDragging = true
+								DragSystem.DraggingObj = obj
+
+								local visual = dataC.Frame:Clone()
+								visual.Size = UDim2.new(0, dataC.Frame.AbsoluteSize.X, 0, dataC.Frame.AbsoluteSize.Y)
+								local sizeFrame = visual.Size_Frame
+								sizeFrame.Position = UDim2.new(0, 0, 0, 0)
+								sizeFrame.Insert.Visible = false
+								local unpackBtn = sizeFrame.Unpack
+								unpackBtn.Visible = false
+								visual.Parent = ScreenGui
+								DragSystem.VisualObj = visual
+							end
+						end
+					end
+				end))
+
+				dragMaid:Add(UserInputService.InputEnded:Connect(function(endInput)
+					if endInput.UserInputType == Enum.UserInputType.MouseButton1 then
+						dragMaid:Destroy()
+
+						if DragSystem.IsDragging then
+							if DragSystem.TargetObj and DragSystem.DraggingObj and DragSystem.TargetObj ~= DragSystem.DraggingObj then
+
+								local function SafeParent(child, newParent)
+									local s, e = pcall(function()
+										if not newParent:IsDescendantOf(child) then
+											child.Parent = newParent
+											local targetNode = NodeMap[newParent]
+											if targetNode then targetNode.SetExpand(true) end
+										end
+									end)
+									if not s then warn("Failed to parent:", e) end
+								end
+
+								if MultiSelection[DragSystem.DraggingObj] then
+									for o, _ in pairs(MultiSelection) do
+										SafeParent(o, DragSystem.TargetObj)
+									end
+								else
+									SafeParent(DragSystem.DraggingObj, DragSystem.TargetObj)
+								end
+							end
+
+							if DragSystem.VisualObj then DragSystem.VisualObj:Destroy() end
+							DragSystem.IsDragging = false
+							DragSystem.DraggingObj = nil
+							DragSystem.VisualObj = nil
+							DragSystem.TargetObj = nil
+
+							return 
+						end
+					end
+				end))
+			end
+		end))
+
+		maid:Add(sizeFrame.MouseEnter:Connect(function()
+			sizeFrame.Insert.Visible = true
+			if not MultiSelection[obj] then sizeFrame.FastSelect.Visible = true end
+			if DragSystem.IsDragging and DragSystem.DraggingObj ~= obj then
+				DragSystem.TargetObj = obj
+
+			end
+		end))
+
+		maid:Add(sizeFrame.MouseLeave:Connect(function()
+			sizeFrame.Insert.Visible = false
+			if not MultiSelection[obj] then sizeFrame.FastSelect.Visible = false end
+			if DragSystem.IsDragging and DragSystem.TargetObj == obj then
+				DragSystem.TargetObj = nil
+
+			end
+		end))
+
+		maid:Add(sizeFrame.Select.MouseButton1Click:Connect(function()
+			if InstanceSelectorState.Active then
+				pcall(function()
+					local targetObj = InstanceSelectorState.Object
+					local propName = InstanceSelectorState.PropName
+
+					if MultiSelection[targetObj] then
+						for o, _ in pairs(MultiSelection) do
+							pcall(function() o[propName] = obj end)
+						end
+					else
+						pcall(function() targetObj[propName] = obj end)
+					end
+				end)
+				InstanceSelectorState.Active = false
+				InstanceSelectorState.Object = nil
+				InstanceSelectorState.PropName = nil
+				return
+			end
+
+			if DragSystem.IsDragging then return end
+
+			local isCtrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+			local isShift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+
+			if isShift and LastSelectionIndexObj and NodeMap[LastSelectionIndexObj] and LastSelectionIndexObj ~= obj then
+				local children = ExplorerScroll:GetChildren()
+				local frames = {}
+				for _, v in pairs(children) do
+					if v:IsA("Frame") and v.Visible then
+						table.insert(frames, v)
+					end
+				end
+				table.sort(frames, function(a,b) return a.Name < b.Name end)
+
+				local startIdx, endIdx
+				local name1 = NodeMap[LastSelectionIndexObj].Frame.Name
+				local name2 = NodeMap[obj].Frame.Name
+
+				for i, f in ipairs(frames) do
+					if f.Name == name1 then startIdx = i end
+					if f.Name == name2 then endIdx = i end
+				end
+
+				if startIdx and endIdx then
+					if not isCtrl then ClearSelection() end
+
+					local low = math.min(startIdx, endIdx)
+					local high = math.max(startIdx, endIdx)
+
+					local startName = frames[low].Name
+					local endName = frames[high].Name
+
+					for o, data in pairs(NodeMap) do
+						if data.Frame.Visible and data.Frame.Name >= startName and data.Frame.Name <= endName then
+							AddToSelection(o)
+						end
+					end
+					updateGuiProperties(obj)
+				end
+			elseif isCtrl then
+				if MultiSelection[obj] then
+					RemoveFromSelection(obj)
+					LastSelectionIndexObj = obj
+				else
+					AddToSelection(obj)
+					LastSelectionIndexObj = obj
+					selectedObject = obj
+					SetHighlight(obj)
+				end
+				updateGuiProperties(obj)
+			else
+				ClearSelection()
+				AddToSelection(obj)
+				LastSelectionIndexObj = obj
+				selectedObject = obj
+				SetHighlight(obj)
+				updateGuiProperties(obj)
+			end
+
+			PropertiesSearch.Text = ""
+		end))
+
+
+		maid:Add(sizeFrame.Select.MouseButton2Click:Connect(function() 
+			if not MultiSelection[obj] then
+				ClearSelection()
+				AddToSelection(obj)
+				LastSelectionIndexObj = obj
+				selectedObject = obj
+				SelectionBox.Adornee = obj
+				updateGuiProperties(obj)
+			end
+			openContextMenu(obj) 
+		end))
+
+		maid:Add(sizeFrame.Insert.MouseButton1Click:Connect(function() displayInsertMenu(obj) end))
+
+		local function toggleExpand()
+			if not isopen.Value then
+				unpackBtn.Rotation = 0
+				isopen.Value = true
+				local children = obj:GetChildren()
+				for i, child in children do
+					if not NodeMap[child] then
+						VisibleChildren[child] = createNode(child, offset + 15, thisPrefix)
+					end
+				end
+				updateExplorerScroll()
+			else
+				unpackBtn.Rotation = -90
+				isopen.Value = false
+				cleanChildren(dataC)
+				updateExplorerScroll()
+			end
+		end
+		local function SetExpand(val)
+			if val then
+				unpackBtn.Rotation = 0
+				isopen.Value = true
+				local children = obj:GetChildren()
+				for i, child in children do
+					if not NodeMap[child] then
+						VisibleChildren[child] = createNode(child, offset + 15, thisPrefix)
+					end
+				end
+				updateExplorerScroll()
+			else
+				unpackBtn.Rotation = -90
+				isopen.Value = false
+				cleanChildren(dataC)
+				updateExplorerScroll()
+			end
+		end
+
+		dataC.SetExpand = SetExpand
+
+		maid:Add(unpackBtn.MouseButton1Click:Connect(toggleExpand))
+
+		maid:Add(obj.ChildAdded:Connect(function(child)
+			task.defer(function()
+				if child.Parent ~= obj then 
+					return 
+				end
+				checkChildren()
+				if isopen.Value then
+					if not NodeMap[child] then
+						VisibleChildren[child] = createNode(child, offset + 15, thisPrefix)
+						updateExplorerScroll()
+
+					end
+				end
+			end)
+		end))
+
+		maid:Add(obj.ChildRemoved:Connect(function(child)
+			checkChildren()
+			VisibleChildren[child] = nil
+		end))
+
+		maid:Add(obj:GetPropertyChangedSignal("Name"):Connect(function()
+			sizeFrame.Nam.Text = obj.Name
+		end))
+
+		maid:Add(obj.AncestryChanged:Connect(function(_, parent)
+			if NodeMap[obj] then
+				dataC.Maid:Destroy()
+				dataC.Frame:Destroy()
+				NodeMap[obj] = nil
+				updateExplorerScroll()
+			end
+			if MultiSelection[obj] then
+				RemoveFromSelection(obj)
+			end
+		end))
+
+
+		return dataC
+	end
+
+	local function getParents(inst)
+		local t = {}
+		while inst do
+			table.insert(t, 1, inst)
+			inst = inst.Parent
+		end
+		return t
+	end
+	local function ClearTree()
+		for obj,dataC in NodeMap do
+			dataC.Maid:Destroy()
+			dataC.Frame:Destroy()
+			NodeMap[obj] = nil
+		end
+	end
+	local function initTree()
+		ClearTree()
+		createNode(game, 0, "")
+		updateExplorerScroll()
+	end
+
+	initTree()
+
+	local isSearching = false
+	ExplorerSearch.FocusLost:Connect(function(enter)
+		if enter then
+			local text = ExplorerSearch.Text
+			if text == "" then
+				if isSearching then isSearching = false initTree() end
+				return
+			end
+			isSearching = true
+			IsLoadingVal.Value = true
+			ClearTree()
+
+			task.spawn(function()
+				local results = {}
+				for i, v in game:GetDescendants() do
+					if string.find(string.lower(v.Name), string.lower(text)) then table.insert(results, v) end
+					if i % 1000 == 0 then RunService.RenderStepped:Wait() end
+				end
+				for i, v in results do
+					local ParentNode = nil
+					local prefix = ""
+					local c = getParents(v)
+					for i,v2 in c do
+						if not NodeMap[v2] then
+							local w = createNode(v2,(i-1)*15,prefix)
+							if ParentNode then
+								ParentNode.VisibleChildren[v2] = w
+							end
+						end
+						if v2 ~= v then
+							NodeMap[v2].expand()
+						end
+						prefix = NodeMap[v2].Prefix
+						ParentNode = NodeMap[v2]
+					end
+					if i % 20 == 0 then RunService.RenderStepped:Wait() end
+				end
+				updateExplorerScroll()
+				IsLoadingVal.Value = false
+			end)
+		end
+	end)
+end
+
+StartLogic()
