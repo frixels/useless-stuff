@@ -2357,7 +2357,7 @@ local function StartLogic()
 
 		updatePropertiesScroll()
 	end
-
+	local wid = 0
 	local function createNode(obj, offset, parentPrefix)
 		if not obj then return end
 		if NodeMap[obj] then return NodeMap[obj] end
@@ -2367,15 +2367,16 @@ local function StartLogic()
 		local sizeFrame = clone.Size_Frame
 		local unpackBtn = sizeFrame.Unpack
 		local isopen = sizeFrame.IsOpen
-		local uniqueId = tostring(math.random(1e8, 1e9-1))
-		local Name = numberToLetters(1e8-#obj:GetChildren())
+		local uniqueId = numberToLetters(wid)
+		wid +=1
+		local Name = numberToLetters(1e5-#obj:GetChildren())
 		local thisPrefix
 		if parentPrefix == "" then
-			thisPrefix = "_" .. Name
+			thisPrefix = Name
 		else
-			thisPrefix = parentPrefix .. "_" .. Name
+			thisPrefix = parentPrefix .. Name
 		end
-		thisPrefix = thisPrefix .. "_" .. uniqueId
+		thisPrefix = thisPrefix .. uniqueId
 		clone.Name = thisPrefix
 
 		sizeFrame.Nam.Text = tostring(obj.Name)
