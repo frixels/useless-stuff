@@ -8,13 +8,46 @@ local MAX_LOGS = 150
 local scanningEnabled = true
 local excludedRemotes = {}
 local blockedRemotes = {}
-local logs = {}
+local logLookup = {} -- Lookup dictionary for O(1) signature matching
 local hookedRemotes = {}
 local incomingConnections = {}
+local activeLoops = {} -- Tracks actively loop-firing codes
 local selectedRemote = nil
 local searchQuery = ""
 local logOrder = 0
 local activeFilter = "Out"
+
+-- Weak-keyed table to uniquely identify Roblox Instances without relying on tostring()
+local instanceIds = setmetatable({}, { __mode = "k" })
+local nextInstanceId = 0
+local function GetUniqueInstanceId(instance)
+    if not instance then return "nil" end
+    local id = instanceIds[instance]
+    if not id then
+        nextInstanceId = nextInstanceId + 1
+        id = "inst_" .. nextInstanceId
+        instanceIds[instance] = id
+    end
+    return id
+end
+
+-- _G Instance Registry for accurate firing of identical-named instances
+local instanceMap = {}
+local instanceCounter = 0
+
+-- Pre-allocated fixed circular buffers for maximum execution speed
+local buffers = {
+    outgoing = table.create(MAX_LOGS),
+    incoming = table.create(MAX_LOGS)
+}
+local writeIndices = {
+    outgoing = 1,
+    incoming = 1
+}
+local counts = {
+    outgoing = 0,
+    incoming = 0
+}
 
 if CoreGui:FindFirstChild(GUI_NAME) then
     CoreGui[GUI_NAME]:Destroy()
@@ -130,6 +163,7 @@ ScrollList.BorderSizePixel = 0
 ScrollList.Position = UDim2.new(0, 0, 0, 23)
 ScrollList.Size = UDim2.new(0.25, -4, 1, -23)
 ScrollList.CanvasSize = UDim2.new(0, 0, 0, 0)
+ScrollList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 ScrollList.ScrollBarThickness = 2
 
 local ListCorner = Instance.new("UICorner")
@@ -237,11 +271,12 @@ Row1.BackgroundTransparency = 1
 Row1.Position = UDim2.new(0, 5, 0, 6)
 Row1.Size = UDim2.new(1, -10, 0, 18)
 
-local CopyBtn    = MakeBtn(Row1, "Copy",    Color3.fromRGB(52, 152, 219),  0,    0, 1/5)
-local ClearBtn   = MakeBtn(Row1, "Clear",   Color3.fromRGB(52, 73, 94),    1/5,  0, 1/5)
-local ExcludeBtn = MakeBtn(Row1, "Exclude", Color3.fromRGB(230, 126, 34),  2/5,  0, 1/5)
-local BlockBtn   = MakeBtn(Row1, "Block",   Color3.fromRGB(192, 57, 43),   3/5,  0, 1/5)
-local FireBtn    = MakeBtn(Row1, "Fire",    Color3.fromRGB(46, 204, 113),  4/5,  0, 1/5)
+local CopyBtn    = MakeBtn(Row1, "Copy",    Color3.fromRGB(52, 152, 219),  0,    0, 1/6)
+local ClearBtn   = MakeBtn(Row1, "Clear",   Color3.fromRGB(52, 73, 94),    1/6,  0, 1/6)
+local ExcludeBtn = MakeBtn(Row1, "Exclude", Color3.fromRGB(230, 126, 34),  2/6,  0, 1/6)
+local BlockBtn   = MakeBtn(Row1, "Block",   Color3.fromRGB(192, 57, 43),   3/6,  0, 1/6)
+local FireBtn    = MakeBtn(Row1, "Fire",    Color3.fromRGB(46, 204, 113),  4/6,  0, 1/6)
+local LoopBtn    = MakeBtn(Row1, "Loop",    Color3.fromRGB(155, 89, 182),  5/6,  0, 1/6)
 
 local Row2 = Instance.new("Frame")
 Row2.Parent = BottomPanel
@@ -274,8 +309,9 @@ for _, name in ipairs(filterNames) do
     filterBtns[name] = fb
 end
 
-local ClearExclBtn = MakeBtn(Row2, "Clr Excl",    Color3.fromRGB(80, 80, 80),   0.5,  0, 0.25)
-local ClearBlkBtn  = MakeBtn(Row2, "Clr Block",   Color3.fromRGB(100, 40, 40),  0.75, 0, 0.25)
+local ClearExclBtn = MakeBtn(Row2, "Clr Excl",    Color3.fromRGB(80, 80, 80),   3/6,  0, 1/6)
+local ClearBlkBtn  = MakeBtn(Row2, "Clr Block",   Color3.fromRGB(100, 40, 40),  4/6,  0, 1/6)
+local ClearLpBtn   = MakeBtn(Row2, "Clr Loops",   Color3.fromRGB(155, 89, 182), 5/6,  0, 1/6)
 
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Parent = BottomPanel
@@ -357,33 +393,47 @@ end)
 local function updateStatus()
     local excCount = 0
     local blkCount = 0
-    local outCount = 0
-    local inCount  = 0
     for _ in pairs(excludedRemotes) do excCount = excCount + 1 end
     for _ in pairs(blockedRemotes) do blkCount = blkCount + 1 end
-    for _, l in ipairs(logs) do
-        if l.HookType == "outgoing" then outCount = outCount + 1
-        else inCount = inCount + 1 end
-    end
+    
     StatusLabel.Text = "Blocked: " .. blkCount
         .. "  |  Excluded: " .. excCount
-        .. "  |  Out: " .. outCount
-        .. "  |  In: " .. inCount
+        .. "  |  Out: " .. counts.outgoing
+        .. "  |  In: " .. counts.incoming
 end
+
+-- FORWARD DECLARE UI POOL FUNCTIONS SO THEY CAN BE ACCESSED HERE
+local CreateLogButton, ReleaseLogButton
 
 local function updateLogVisibility()
     local query = searchQuery:lower()
-    for _, log in pairs(logs) do
-        if log.Btn then
-            local nameMatch = query == ""
-                or log.CachedName:lower():find(query, 1, true)
-                or log.CachedArgs:lower():find(query, 1, true)
-            local filterMatch = (activeFilter == "Out" and log.HookType == "outgoing")
-                or (activeFilter == "In"  and log.HookType == "incoming")
-            log.Btn.Visible = nameMatch and filterMatch
+    
+    local function checkBuffer(buffer)
+        for i = 1, MAX_LOGS do
+            local log = buffer[i]
+            if log then
+                local nameMatch = query == ""
+                    or log.CachedName:lower():find(query, 1, true)
+                    or log.CachedSignature:lower():find(query, 1, true)
+                local filterMatch = (activeFilter == "Out" and log.HookType == "outgoing")
+                    or (activeFilter == "In"  and log.HookType == "incoming")
+                
+                if nameMatch and filterMatch then
+                    if not log.BtnInfo then
+                        CreateLogButton(log)
+                    end
+                else
+                    if log.BtnInfo then
+                        ReleaseLogButton(log.BtnInfo)
+                        log.BtnInfo = nil
+                    end
+                end
+            end
         end
     end
-    ScrollList.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y)
+    
+    checkBuffer(buffers.outgoing)
+    checkBuffer(buffers.incoming)
 end
 
 for _, name in ipairs(filterNames) do
@@ -401,29 +451,66 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
     updateLogVisibility()
 end)
 
+local function clearBuffer(buffer, listType)
+    for i = 1, MAX_LOGS do
+        local log = buffer[i]
+        if log then
+            if log.BtnInfo then
+                ReleaseLogButton(log.BtnInfo)
+                log.BtnInfo = nil
+            end
+            buffer[i] = nil
+        end
+    end
+    writeIndices[listType] = 1
+    counts[listType] = 0
+end
+
 ClearBtn.MouseButton1Click:Connect(function()
-    for _, l in pairs(logs) do if l.Btn then l.Btn:Destroy() end end
-    logs = {}
+    clearBuffer(buffers.outgoing, "outgoing")
+    clearBuffer(buffers.incoming, "incoming")
+    logLookup = {}
     selectedRemote = nil
     logOrder = 0
-    ScrollList.CanvasSize = UDim2.new(0, 0, 0, 0)
     RawCodeBox.Text = "-- Cleared logs."
     CodeBox.Text = "-- Cleared logs."
     updateStatus()
+
+    LoopBtn.Text = "Loop"
+    LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
 end)
+
+local function removeRemoteFromBuffer(buffer, remote, listType)
+    for i = 1, MAX_LOGS do
+        local log = buffer[i]
+        if log and log.Remote == remote then
+            if log.BtnInfo then 
+                ReleaseLogButton(log.BtnInfo) 
+                log.BtnInfo = nil
+            end
+            
+            -- Evict dictionary reference using unique instance ID
+            local key = GetUniqueInstanceId(log.Remote) .. "_" .. log.CachedSignature .. "_" .. log.HookType
+            logLookup[key] = nil
+            
+            buffer[i] = nil
+            counts[listType] = counts[listType] - 1
+        end
+    end
+end
 
 ExcludeBtn.MouseButton1Click:Connect(function()
     if selectedRemote then
         excludedRemotes[selectedRemote] = true
-        for i = #logs, 1, -1 do
-            if logs[i].Remote == selectedRemote then
-                if logs[i].Btn then logs[i].Btn:Destroy() end
-                table.remove(logs, i)
-            end
-        end
+        removeRemoteFromBuffer(buffers.outgoing, selectedRemote, "outgoing")
+        removeRemoteFromBuffer(buffers.incoming, selectedRemote, "incoming")
         selectedRemote = nil
+        
         RawCodeBox.Text = "-- Remote hidden from log. Call still fires."
         CodeBox.Text = "-- Remote hidden from log. Call still fires."
+        LoopBtn.Text = "Loop"
+        LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+
         updateStatus()
         updateLogVisibility()
         ExcludeBtn.Text = "Excluded!"
@@ -444,15 +531,15 @@ end)
 BlockBtn.MouseButton1Click:Connect(function()
     if selectedRemote then
         blockedRemotes[selectedRemote] = true
-        for i = #logs, 1, -1 do
-            if logs[i].Remote == selectedRemote then
-                if logs[i].Btn then logs[i].Btn:Destroy() end
-                table.remove(logs, i)
-            end
-        end
+        removeRemoteFromBuffer(buffers.outgoing, selectedRemote, "outgoing")
+        removeRemoteFromBuffer(buffers.incoming, selectedRemote, "incoming")
         selectedRemote = nil
+        
         RawCodeBox.Text = "-- Remote blocked. Calls will be silently dropped."
         CodeBox.Text = "-- Remote blocked. Calls will be silently dropped."
+        LoopBtn.Text = "Loop"
+        LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+
         updateStatus()
         updateLogVisibility()
         BlockBtn.Text = "Blocked!"
@@ -470,6 +557,16 @@ ClearBlkBtn.MouseButton1Click:Connect(function()
     task.delay(1.5, function() ClearBlkBtn.Text = "Clr Block" end)
 end)
 
+ClearLpBtn.MouseButton1Click:Connect(function()
+    activeLoops = {}
+    ClearLpBtn.Text = "Cleared!"
+    
+    LoopBtn.Text = "Loop"
+    LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+
+    task.delay(1.5, function() ClearLpBtn.Text = "Clr Loops" end)
+end)
+
 CopyBtn.MouseButton1Click:Connect(function()
     sigma.setclipboard(RawCodeBox.Text)
     CopyBtn.Text = "Copied!"
@@ -478,7 +575,8 @@ end)
 
 FireBtn.MouseButton1Click:Connect(function()
     local code = RawCodeBox.Text
-    if code and code ~= "" and code ~= "-- Waiting for remotes..." and code ~= "-- Cleared logs." then
+    if code and code ~= "" and code ~= "-- Waiting for remotes..." and code ~= "-- Cleared logs." 
+        and code ~= "-- Remote hidden from log. Call still fires." and code ~= "-- Remote blocked. Calls will be silently dropped." then
         local fn, err = sigma.loadstring(code)
         if fn then
             pcall(fn)
@@ -493,7 +591,70 @@ FireBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+LoopBtn.MouseButton1Click:Connect(function()
+    local code = RawCodeBox.Text
+    if code and code ~= "" 
+       and code ~= "-- Waiting for remotes..." 
+       and code ~= "-- Cleared logs."
+       and code ~= "-- Remote hidden from log. Call still fires."
+       and code ~= "-- Remote blocked. Calls will be silently dropped." then
+        
+        if activeLoops[code] then
+            -- Turn off Loop
+            activeLoops[code] = nil
+            LoopBtn.Text = "Loop"
+            LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+        else
+            -- Turn on Loop
+            local fn, err = sigma.loadstring(code)
+            if fn then
+                activeLoops[code] = fn
+                LoopBtn.Text = "Unloop"
+                LoopBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+            else
+                LoopBtn.Text = "Error!"
+                task.delay(1.5, function()
+                    local currentCode = RawCodeBox.Text
+                    if activeLoops[currentCode] then
+                        LoopBtn.Text = "Unloop"
+                        LoopBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+                    else
+                        LoopBtn.Text = "Loop"
+                        LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+                    end
+                end)
+            end
+        end
+    else
+        LoopBtn.Text = "Select one!"
+        task.delay(1.5, function()
+            local currentCode = RawCodeBox.Text
+            if activeLoops[currentCode] then
+                LoopBtn.Text = "Unloop"
+                LoopBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+            else
+                LoopBtn.Text = "Loop"
+                LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+            end
+        end)
+    end
+end)
+
+-- Execute all active loops cleanly over standard framerate bounds
+RunService.Heartbeat:Connect(function()
+    for _, fn in pairs(activeLoops) do
+        task.spawn(function()
+            pcall(fn)
+        end)
+    end
+end)
+
 local function HighlightLua(code)
+    -- Protect against immense performance dips
+    if #code > 20000 then
+        return code:gsub("<", "&lt;"):gsub(">", "&gt;") .. '\n\n<font color="rgb(255, 100, 100)">--[[ Syntax highlighting disabled: Output is exceptionally large ]]</font>'
+    end
+
     local keywords = {
         ["local"] = true, ["function"] = true, ["end"] = true, ["if"] = true,
         ["then"] = true, ["else"] = true, ["elseif"] = true, ["return"] = true,
@@ -507,16 +668,18 @@ local function HighlightLua(code)
         ["print"] = true, ["warn"] = true, ["error"] = true,
         ["Vector2"] = true, ["Vector3"] = true, ["CFrame"] = true,
         ["Color3"] = true, ["UDim2"] = true, ["math"] = true,
-        ["string"] = true, ["table"] = true, ["unpack"] = true
+        ["string"] = true, ["table"] = true, ["unpack"] = true,
+        ["_G"] = true
     }
-    local output = ""
+    
+    local buffer = {}
     local i = 1
     while i <= #code do
         local char = code:sub(i, i)
         if code:sub(i, i+1) == "--" then
             local endPos = code:find("\n", i) or #code + 1
             local comment = code:sub(i, endPos - 1)
-            output = output .. '<font color="rgb(106, 153, 85)">' .. comment:gsub("<", "&lt;"):gsub(">", "&gt;") .. '</font>'
+            table.insert(buffer, '<font color="rgb(106, 153, 85)">' .. comment:gsub("<", "&lt;"):gsub(">", "&gt;") .. '</font>')
             i = endPos
         elseif char == '"' or char == "'" then
             local quote = char
@@ -534,7 +697,7 @@ local function HighlightLua(code)
                 endPos = endPos + 1
             end
             local str = code:sub(i, endPos)
-            output = output .. '<font color="rgb(206, 145, 120)">' .. str:gsub("<", "&lt;"):gsub(">", "&gt;") .. '</font>'
+            table.insert(buffer, '<font color="rgb(206, 145, 120)">' .. str:gsub("<", "&lt;"):gsub(">", "&gt;") .. '</font>')
             i = endPos + 1
         elseif char:match("[%a_]") then
             local endPos = i
@@ -543,11 +706,11 @@ local function HighlightLua(code)
             end
             local word = code:sub(i, endPos - 1)
             if keywords[word] then
-                output = output .. '<font color="rgb(86, 156, 214)">' .. word .. '</font>'
+                table.insert(buffer, '<font color="rgb(86, 156, 214)">' .. word .. '</font>')
             elseif globals[word] then
-                output = output .. '<font color="rgb(78, 201, 176)">' .. word .. '</font>'
+                table.insert(buffer, '<font color="rgb(78, 201, 176)">' .. word .. '</font>')
             else
-                output = output .. word
+                table.insert(buffer, word)
             end
             i = endPos
         elseif char:match("%d") then
@@ -556,10 +719,10 @@ local function HighlightLua(code)
                 endPos = endPos + 1
             end
             local num = code:sub(i, endPos - 1)
-            output = output .. '<font color="rgb(181, 206, 168)">' .. num .. '</font>'
+            table.insert(buffer, '<font color="rgb(181, 206, 168)">' .. num .. '</font>')
             i = endPos
         elseif char == ":" or char == "." then
-            output = output .. char
+            table.insert(buffer, char)
             i = i + 1
             if i <= #code and code:sub(i, i):match("[%a_]") then
                 local endPos = i
@@ -567,19 +730,23 @@ local function HighlightLua(code)
                     endPos = endPos + 1
                 end
                 local method = code:sub(i, endPos - 1)
-                output = output .. '<font color="rgb(220, 220, 170)">' .. method .. '</font>'
+                table.insert(buffer, '<font color="rgb(220, 220, 170)">' .. method .. '</font>')
                 i = endPos
             end
         else
-            output = output .. char:gsub("<", "&lt;"):gsub(">", "&gt;")
+            -- Parentheses wrap forces gsub to return ONLY its first value (the string)
+            table.insert(buffer, (char:gsub("<", "&lt;"):gsub(">", "&gt;")))
             i = i + 1
         end
     end
-    return output
+    return table.concat(buffer)
 end
 
+-- Generates string paths strictly
 local function GetPath(obj)
-    if not obj or not obj.Parent then return "nil" end
+    if not obj then return "nil" end
+    if typeof(obj) ~= "Instance" then return tostring(obj) end
+    if not obj.Parent then return "nil --[[ " .. obj.ClassName .. " (No Parent) ]]" end
     if obj == game then return "game" end
     if obj == workspace then return "workspace" end
     if obj.Parent == game then
@@ -587,7 +754,7 @@ local function GetPath(obj)
     end
     local path = ""
     local current = obj
-    while current.Parent and current ~= game do
+    while current and current.Parent and current ~= game do
         local name = current.Name
         if name:match("^[%a_][%w_]*$") then
             path = "." .. name .. path
@@ -603,73 +770,218 @@ local function GetPath(obj)
     end
 end
 
-local Serialize
+-- Strictly checks the hierarchy via Roblox's internal FindFirstChild to see if paths are identical/ambiguous.
+local function GetOptimalPath(obj)
+    if typeof(obj) ~= "Instance" then return tostring(obj) end
+    if obj == game then return "game" end
+    if obj == workspace then return "workspace" end
+    
+    local isSafe = true
+    local current = obj
+    
+    while current and current ~= game and current ~= workspace do
+        if not current.Parent then 
+            isSafe = false 
+            break 
+        end
+        if current.Parent == game then
+            break -- Services fetched via game:GetService are always unique and safe
+        end
+        
+        -- If FindFirstChild grabs a DIFFERENT instance than us, our name is identical to a sibling that loads first!
+        if current.Parent:FindFirstChild(current.Name) ~= current then
+            isSafe = false
+            break
+        end
+        
+        current = current.Parent
+    end
+    
+    local standardPath = GetPath(obj)
+    
+    if isSafe then
+        return standardPath
+    else
+        if instanceMap[obj] then
+            return instanceMap[obj]
+        end
+        instanceCounter = instanceCounter + 1
+        local key = "SigmaSpy_Inst_" .. instanceCounter
+        _G[key] = obj
+        
+        local ref = '_G["' .. key .. '"]'
+        instanceMap[obj] = ref
+        return ref
+    end
+end
 
-local function Serialize(v, indent, visited)
+-- Fast freeze utility so instances and deep tables don't get lost/modified right as they enter
+local function FreezeData(v, visited, depth)
+    depth = depth or 0
+    if depth > 20 then return "<Max Depth Reached>" end
+    
+    local t = typeof(v)
+    if t == "Instance" then
+        local optimalPath = GetOptimalPath(v)
+        local rawPath = GetPath(v)
+        return { __IS_INSTANCE = true, Ref = optimalPath, Path = rawPath }
+    elseif t == "table" then
+        visited = visited or {}
+        if visited[v] then return "<Cyclic Reference>" end
+        visited[v] = true
+        
+        local newTab = {}
+        for k, val in pairs(v) do
+            local frozenKey = k
+            if type(k) == "table" or typeof(k) == "Instance" then
+                frozenKey = FreezeData(k, visited, depth + 1)
+            end
+            newTab[frozenKey] = FreezeData(val, visited, depth + 1)
+        end
+        if v.n ~= nil then newTab.n = v.n end
+        return newTab
+    end
+    return v
+end
+
+-- Creating a lighter-weight signature utilizing optimal references to correctly stack exactly identical payloads
+local function GenerateSignature(v, depth, visited)
+    depth = depth or 0
+    visited = visited or {}
+    if depth > 3 then return "..." end
+    local t = type(v)
+    if t == "table" then
+        if visited[v] then return "<Cyclic>" end
+        visited[v] = true
+        if v.__IS_INSTANCE then return v.Ref end
+        local s = "{"
+        local count = 0
+        for k, val in pairs(v) do
+            if k == "n" and type(val) == "number" then continue end
+            if count > 5 then s = s .. "..."; break end
+            s = s .. tostring(k) .. ":" .. GenerateSignature(val, depth + 1, visited) .. ","
+            count = count + 1
+        end
+        return s .. "}"
+    end
+    return tostring(v)
+end
+
+-- Extremely fast serialization using table buffers instead of native string appending
+local function Serialize(v, indent, visited, buffer)
+    local isMain = false
+    if not buffer then
+        buffer = {}
+        isMain = true
+    end
     indent = indent or 0
     visited = visited or {}
-    if v == nil then return "nil" end
+
+    if v == nil then 
+        table.insert(buffer, "nil")
+        if isMain then return table.concat(buffer) end
+        return
+    end
+
     local t = typeof(v)
     if t == "string" then
-        local result = {}
-        table.insert(result, '"')
-        for i = 1, #v do
-            local byte = string.byte(v, i)
-            local char = string.char(byte)
-            if byte >= 32 and byte <= 126 then
-                if char == '"' then table.insert(result, '\\"')
-                elseif char == '\\' then table.insert(result, '\\\\')
-                else table.insert(result, char) end
+        table.insert(buffer, string.format("%q", v))
+    elseif t == "number" or t == "boolean" then
+        if v == math.huge then table.insert(buffer, "math.huge")
+        elseif v == -math.huge then table.insert(buffer, "-math.huge")
+        else table.insert(buffer, tostring(v)) end
+    elseif t == "table" then
+        if v.__IS_INSTANCE then
+            if v.Ref == v.Path then 
+                table.insert(buffer, v.Ref)
             else
-                table.insert(result, "\\" .. byte)
+                table.insert(buffer, v.Ref .. " --[[ " .. v.Path .. " ]]")
+            end
+        else
+            if visited[v] then
+                table.insert(buffer, '"--[[ Cyclic Reference ]]"')
+            else
+                visited[v] = true
+                local count = 0
+                for _ in pairs(v) do count = count + 1 end
+                
+                local realCount = count
+                if v.n ~= nil then realCount = realCount - 1 end
+                
+                if realCount == 0 and v.n == nil then
+                    table.insert(buffer, "{}")
+                else
+                    table.insert(buffer, "{\n")
+                    local indStr = string.rep("    ", indent + 1)
+                    
+                    if v.n and type(v.n) == "number" then
+                        for i = 1, v.n do
+                            table.insert(buffer, indStr)
+                            table.insert(buffer, "[" .. i .. "] = ")
+                            if v[i] == nil then table.insert(buffer, "nil")
+                            else Serialize(v[i], indent + 1, visited, buffer) end
+                            table.insert(buffer, ",\n")
+                        end
+                    else
+                        for k, val in pairs(v) do
+                            table.insert(buffer, indStr)
+                            if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+                                table.insert(buffer, k)
+                            elseif type(k) == "string" then
+                                table.insert(buffer, '["' .. k .. '"]')
+                            else
+                                table.insert(buffer, "[")
+                                Serialize(k, 0, visited, buffer)
+                                table.insert(buffer, "]")
+                            end
+                            table.insert(buffer, " = ")
+                            Serialize(val, indent + 1, visited, buffer)
+                            table.insert(buffer, ",\n")
+                        end
+                    end
+                    table.insert(buffer, string.rep("    ", indent))
+                    table.insert(buffer, "}")
+                end
             end
         end
-        table.insert(result, '"')
-        return table.concat(result)
-    elseif t == "number" then
-        if v == math.huge then return "math.huge" end
-        if v == -math.huge then return "-math.huge" end
-        return tostring(v)
-    elseif t == "boolean" then
-        return tostring(v)
-    elseif t == "function" then
-        return "nil --[[ Function ]]"
-    elseif t == "userdata" then
-        return "nil --[[ Userdata ]]"
-    elseif t == "Instance" then
-        return GetPath(v)
-    elseif t == "EnumItem" then
-        return tostring(v)
     elseif t == "Vector2" then
-        return string.format("Vector2.new(%s, %s)", tostring(v.X), tostring(v.Y))
+        table.insert(buffer, string.format("Vector2.new(%s, %s)", tostring(v.X), tostring(v.Y)))
     elseif t == "Vector3" then
-        return string.format("Vector3.new(%s, %s, %s)", tostring(v.X), tostring(v.Y), tostring(v.Z))
+        table.insert(buffer, string.format("Vector3.new(%s, %s, %s)", tostring(v.X), tostring(v.Y), tostring(v.Z)))
     elseif t == "Vector2int16" then
-        return string.format("Vector2int16.new(%d, %d)", v.X, v.Y)
+        table.insert(buffer, string.format("Vector2int16.new(%d, %d)", v.X, v.Y))
     elseif t == "Vector3int16" then
-        return string.format("Vector3int16.new(%d, %d, %d)", v.X, v.Y, v.Z)
+        table.insert(buffer, string.format("Vector3int16.new(%d, %d, %d)", v.X, v.Y, v.Z))
     elseif t == "CFrame" then
-        return string.format("CFrame.new(%s)", tostring(v))
+        table.insert(buffer, string.format("CFrame.new(%s)", tostring(v)))
     elseif t == "UDim" then
-        return string.format("UDim.new(%s, %s)", tostring(v.Scale), tostring(v.Offset))
+        table.insert(buffer, string.format("UDim.new(%s, %s)", tostring(v.Scale), tostring(v.Offset)))
     elseif t == "UDim2" then
-        return string.format("UDim2.new(%s, %s, %s, %s)", tostring(v.X.Scale), tostring(v.X.Offset), tostring(v.Y.Scale), tostring(v.Y.Offset))
+        table.insert(buffer, string.format("UDim2.new(%s, %s, %s, %s)", tostring(v.X.Scale), tostring(v.X.Offset), tostring(v.Y.Scale), tostring(v.Y.Offset)))
     elseif t == "Rect" then
-        return string.format("Rect.new(%s, %s, %s, %s)", tostring(v.Min.X), tostring(v.Min.Y), tostring(v.Max.X), tostring(v.Max.Y))
+        table.insert(buffer, string.format("Rect.new(%s, %s, %s, %s)", tostring(v.Min.X), tostring(v.Min.Y), tostring(v.Max.X), tostring(v.Max.Y)))
     elseif t == "Color3" then
-        return string.format("Color3.new(%s, %s, %s)", tostring(v.R), tostring(v.G), tostring(v.B))
+        table.insert(buffer, string.format("Color3.new(%s, %s, %s)", tostring(v.R), tostring(v.G), tostring(v.B)))
     elseif t == "BrickColor" then
-        return string.format("BrickColor.new(%q)", tostring(v))
+        table.insert(buffer, string.format("BrickColor.new(%q)", tostring(v)))
     elseif t == "ColorSequence" then
-        if #v.Keypoints > 2 then return "nil --[[ ColorSequence (Complex) ]]"
-        else return string.format("ColorSequence.new(%s)", Serialize(v.Keypoints[1].Value, indent, visited)) end
+        if #v.Keypoints > 2 then table.insert(buffer, "nil --[[ ColorSequence (Complex) ]]")
+        else
+            table.insert(buffer, "ColorSequence.new(")
+            Serialize(v.Keypoints[1].Value, indent, visited, buffer)
+            table.insert(buffer, ")")
+        end
     elseif t == "Ray" then
-        return string.format("Ray.new(%s, %s)", Serialize(v.Origin, indent, visited), Serialize(v.Direction, indent, visited))
+        table.insert(buffer, "Ray.new(")
+        Serialize(v.Origin, indent, visited, buffer)
+        table.insert(buffer, ", ")
+        Serialize(v.Direction, indent, visited, buffer)
+        table.insert(buffer, ")")
     elseif t == "NumberRange" then
-        return string.format("NumberRange.new(%s, %s)", tostring(v.Min), tostring(v.Max))
+        table.insert(buffer, string.format("NumberRange.new(%s, %s)", tostring(v.Min), tostring(v.Max)))
     elseif t == "PhysicalProperties" then
-        return string.format("PhysicalProperties.new(%s, %s, %s, %s, %s)",
-            tostring(v.Density), tostring(v.Friction), tostring(v.Elasticity), tostring(v.FrictionWeight), tostring(v.ElasticityWeight))
+        table.insert(buffer, string.format("PhysicalProperties.new(%s, %s, %s, %s, %s)",
+            tostring(v.Density), tostring(v.Friction), tostring(v.Elasticity), tostring(v.FrictionWeight), tostring(v.ElasticityWeight)))
     elseif t == "Faces" then
         local axes = {}
         if v.Top    then table.insert(axes, "Enum.NormalId.Top")    end
@@ -678,56 +990,38 @@ local function Serialize(v, indent, visited)
         if v.Right  then table.insert(axes, "Enum.NormalId.Right")  end
         if v.Back   then table.insert(axes, "Enum.NormalId.Back")   end
         if v.Front  then table.insert(axes, "Enum.NormalId.Front")  end
-        return "Faces.new(" .. table.concat(axes, ", ") .. ")"
-    elseif t == "table" then
-        if visited[v] then
-            return '"--[[ Cyclic Reference ]]"'
-        end
-        visited[v] = true
-        local str = "{\n"
-        local count = 0
-        for _ in pairs(v) do count = count + 1 end
-        if count == 0 then return "{}" end
-        if v.n and type(v.n) == "number" then
-            for i = 1, v.n do
-                local val = v[i]
-                local valStr = (val == nil) and "nil" or Serialize(val, indent + 1, visited)
-                str = str .. string.rep("    ", indent + 1) .. "[" .. i .. "] = " .. valStr .. ",\n"
-            end
-        else
-            for k, val in pairs(v) do
-                local keyStr = ""
-                if type(k) == "string" and k:match("^[%a_][%w_]*$") then
-                    keyStr = k
-                elseif type(k) == "string" then
-                    keyStr = '["' .. k .. '"]'
-                else
-                    keyStr = "[" .. Serialize(k, 0, visited) .. "]"
-                end
-                str = str .. string.rep("    ", indent + 1) .. keyStr .. " = " .. Serialize(val, indent + 1, visited) .. ",\n"
-            end
-        end
-        str = str .. string.rep("    ", indent) .. "}"
-        return str
+        table.insert(buffer, "Faces.new(" .. table.concat(axes, ", ") .. ")")
+    elseif t == "EnumItem" then
+        table.insert(buffer, tostring(v))
+    elseif t == "function" then
+        table.insert(buffer, "nil --[[ Function ]]")
+    elseif t == "userdata" then
+        table.insert(buffer, "nil --[[ Userdata ]]")
+    else
+        table.insert(buffer, "nil --[[ " .. t .. " ]]")
     end
-    return "nil --[[ " .. t .. " ]]"
+
+    if isMain then return table.concat(buffer) end
 end
 
-local function ConstructScript(name, path, argsStr, count, remoteType)
+local function ConstructScript(name, path, ref, argsStr, count, remoteType)
     local output = "-- Remote: " .. name .. "\n"
     output = output .. "-- Path: " .. path .. "\n"
     output = output .. "-- Type: " .. remoteType .. "\n"
+    if ref ~= path then
+        output = output .. "-- Note: Ambiguous path detected, using _G instance cache \n"
+    end
     output = output .. "-- Args Count: " .. count .. "\n"
     output = output .. "local args = " .. argsStr .. "\n\n"
     local unpackCall = "unpack(args, 1, " .. count .. ")"
     if remoteType == "RemoteFunction" then
-        output = output .. path .. ":InvokeServer(" .. unpackCall .. ")"
+        output = output .. ref .. ":InvokeServer(" .. unpackCall .. ")"
     elseif remoteType == "BindableEvent" then
-        output = output .. path .. ":Fire(" .. unpackCall .. ")"
+        output = output .. ref .. ":Fire(" .. unpackCall .. ")"
     elseif remoteType == "BindableFunction" then
-        output = output .. path .. ":Invoke(" .. unpackCall .. ")"
+        output = output .. ref .. ":Invoke(" .. unpackCall .. ")"
     else
-        output = output .. path .. ":FireServer(" .. unpackCall .. ")"
+        output = output .. ref .. ":FireServer(" .. unpackCall .. ")"
     end
     return output
 end
@@ -741,6 +1035,168 @@ local typeColors = {
     BindableFunction      = Color3.fromRGB(52, 152, 219),
 }
 
+-- Create the LogTemplate instance once to clone inside Object Pool
+local LogTemplate = Instance.new("TextButton")
+LogTemplate.Name = "LogTemplate"
+LogTemplate.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+LogTemplate.Size = UDim2.new(1, -6, 0, 28)
+LogTemplate.Font = Enum.Font.GothamMedium
+LogTemplate.Text = ""
+LogTemplate.TextColor3 = Color3.fromRGB(220, 220, 220)
+LogTemplate.TextSize = 10
+LogTemplate.TextXAlignment = Enum.TextXAlignment.Left
+LogTemplate.ClipsDescendants = true
+
+local LogCorner = Instance.new("UICorner")
+LogCorner.CornerRadius = UDim.new(0, 3)
+LogCorner.Parent = LogTemplate
+
+local LogIndicator = Instance.new("Frame")
+LogIndicator.Name = "Indicator"
+LogIndicator.Size = UDim2.new(0, 2, 1, 0)
+LogIndicator.BorderSizePixel = 0
+LogIndicator.Parent = LogTemplate
+
+local LogBadge = Instance.new("TextLabel")
+LogBadge.Name = "Badge"
+LogBadge.Size = UDim2.new(0, 18, 0, 9)
+LogBadge.Position = UDim2.new(1, -21, 0, 3)
+LogBadge.Font = Enum.Font.GothamBold
+LogBadge.TextSize = 6
+LogBadge.BorderSizePixel = 0
+LogBadge.Parent = LogTemplate
+
+local LogBadgeCorner = Instance.new("UICorner")
+LogBadgeCorner.CornerRadius = UDim.new(0, 2)
+LogBadgeCorner.Parent = LogBadge
+
+local LogNameLabel = Instance.new("TextLabel")
+LogNameLabel.Name = "NameLabel"
+LogNameLabel.BackgroundTransparency = 1
+LogNameLabel.Position = UDim2.new(0, 6, 0, 1)
+LogNameLabel.Size = UDim2.new(1, -28, 0, 14)
+LogNameLabel.Font = Enum.Font.GothamBold
+LogNameLabel.TextSize = 10
+LogNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+LogNameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+LogNameLabel.Parent = LogTemplate
+
+local LogInfoLabel = Instance.new("TextLabel")
+LogInfoLabel.Name = "InfoLabel"
+LogInfoLabel.BackgroundTransparency = 1
+LogInfoLabel.Position = UDim2.new(0, 6, 0, 15)
+LogInfoLabel.Size = UDim2.new(1, -28, 0, 11)
+LogInfoLabel.Font = Enum.Font.Gotham
+LogInfoLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+LogInfoLabel.TextSize = 8
+LogInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+LogInfoLabel.TextTruncate = Enum.TextTruncate.AtEnd
+LogInfoLabel.Parent = LogTemplate
+
+-- ==========================================
+-- LAZY LOADING & OBJECT POOLING SYSTEM
+-- ==========================================
+local logButtonPool = {}
+
+local function GetLogButton()
+    local btnInfo = table.remove(logButtonPool)
+    if btnInfo then
+        return btnInfo
+    end
+
+    local btn = LogTemplate:Clone()
+    local ind = btn:FindFirstChild("Indicator")
+    local badge = btn:FindFirstChild("Badge")
+    local nameLabel = btn:FindFirstChild("NameLabel")
+    local infoLabel = btn:FindFirstChild("InfoLabel")
+
+    return {
+        Btn = btn,
+        Ind = ind,
+        Badge = badge,
+        NameLabel = nameLabel,
+        InfoLabel = infoLabel,
+        Connection = nil
+    }
+end
+
+function ReleaseLogButton(btnInfo)
+    if not btnInfo then return end
+    btnInfo.Btn.Visible = false
+    btnInfo.Btn.Parent = nil
+    if btnInfo.Connection then
+        btnInfo.Connection:Disconnect()
+        btnInfo.Connection = nil
+    end
+    table.insert(logButtonPool, btnInfo)
+end
+
+function CreateLogButton(log)
+    if log.BtnInfo then return end
+    
+    local btnInfo = GetLogButton()
+    log.BtnInfo = btnInfo
+    
+    local btn = btnInfo.Btn
+    local ind = btnInfo.Ind
+    local badge = btnInfo.Badge
+    local nameLabel = btnInfo.NameLabel
+    local infoLabel = btnInfo.InfoLabel
+    
+    btn.LayoutOrder = log.LayoutOrder
+    btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+    
+    local typeColor = typeColors[log.CachedType] or Color3.fromRGB(149, 165, 166)
+    ind.BackgroundColor3 = typeColor
+
+    badge.BackgroundColor3 = log.HookType == "incoming" and Color3.fromRGB(120, 60, 160) or Color3.fromRGB(40, 60, 80)
+    badge.Text = log.HookType == "incoming" and "IN" or "OUT"
+
+    nameLabel.Text = log.CachedName
+    nameLabel.TextColor3 = typeColor
+
+    local callerTxt = log.CallerScript and ("  •  " .. tostring(log.CallerScript)) or ""
+    local stackTxt = log.StackCount > 1 and ("  •  " .. log.StackCount .. "x") or ""
+    infoLabel.Text = log.Time .. "  •  " .. log.ArgCount .. " args" .. callerTxt .. stackTxt
+    
+    btnInfo.Connection = btn.MouseButton1Click:Connect(function()
+        local function unhighlight(buf)
+            for i = 1, MAX_LOGS do
+                local l = buf[i]
+                if l and l.BtnInfo then
+                    l.BtnInfo.Btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+                end
+            end
+        end
+        unhighlight(buffers.outgoing)
+        unhighlight(buffers.incoming)
+        
+        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 44)
+        selectedRemote = log.Remote
+
+        local cachedArgsStr = Serialize(log.FrozenArgs)
+        local out = ConstructScript(log.CachedName, log.CachedPath, log.CachedRef, cachedArgsStr, log.ArgCount, log.CachedType)
+        if log.CallerScript then
+            out = "-- Called by: " .. tostring(log.CallerScript) .. "\n" .. out
+        end
+        RawCodeBox.Text = out
+        CodeBox.Text = HighlightLua(out)
+        
+        if activeLoops[out] then
+            LoopBtn.Text = "Unloop"
+            LoopBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+        else
+            LoopBtn.Text = "Loop"
+            LoopBtn.BackgroundColor3 = Color3.fromRGB(155, 89, 182)
+        end
+    end)
+    
+    btn.Visible = true
+    btn.Parent = ScrollList
+end
+-- ==========================================
+
+
 local function AddLog(info)
     if not scanningEnabled then return end
     if blockedRemotes[info.Remote] then return end
@@ -753,149 +1209,91 @@ local function AddLog(info)
     local callerScript = info.CallerScript
 
     local cachedPath = GetPath(remote)
-    local cachedArgs = Serialize(args)
+    local cachedRef  = GetOptimalPath(remote)
     local cachedName = remote.Name
     local argCount   = args.n or #args
     local timeStr    = os.date("%H:%M:%S")
 
-    local matchedLog = nil
-    for i = #logs, 1, -1 do
-        local l = logs[i]
-        if l.Remote == remote and l.CachedArgs == cachedArgs and l.HookType == hookType then
-            matchedLog = l
-            break
-        end
-    end
+    -- Freeze data rapidly to prevent lag spikes, while instantly capturing instance states
+    local frozenArgs = FreezeData(args)
+    local cachedSignature = GenerateSignature(frozenArgs)
+
+    -- Define lookup key using references logic for perfect accuracy
+    local lookupKey = GetUniqueInstanceId(remote) .. "_" .. cachedSignature .. "_" .. hookType
+
+    -- Look up matched log in dictionary in O(1) time
+    local matchedLog = logLookup[lookupKey]
 
     if matchedLog then
+        -- Stacked logs DO NOT shift: update layout position, stack count and exit
         matchedLog.StackCount = matchedLog.StackCount + 1
         matchedLog.Time = timeStr
         logOrder = logOrder + 1
-        matchedLog.Btn.LayoutOrder = -logOrder
-        local callerTxt = matchedLog.CallerScript and ("  " .. tostring(matchedLog.CallerScript)) or ""
-        matchedLog.InfoLabel.Text = timeStr .. "  •  " .. matchedLog.ArgCount .. " args" .. callerTxt .. "  •  " .. matchedLog.StackCount .. "x"
-        for i, l in ipairs(logs) do
-            if l == matchedLog then
-                table.remove(logs, i)
-                break
-            end
+        matchedLog.LayoutOrder = -logOrder
+        
+        if matchedLog.BtnInfo then
+            matchedLog.BtnInfo.Btn.LayoutOrder = -logOrder
+            local callerTxt = matchedLog.CallerScript and ("  •  " .. tostring(matchedLog.CallerScript)) or ""
+            matchedLog.BtnInfo.InfoLabel.Text = timeStr .. "  •  " .. matchedLog.ArgCount .. " args" .. callerTxt .. "  •  " .. matchedLog.StackCount .. "x"
         end
-        table.insert(logs, matchedLog)
-        ScrollList.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y)
+        
         updateStatus()
         return
     end
 
-    local typeCount = 0
-    local oldestIdx = nil
-    for i, l in ipairs(logs) do
-        if l.HookType == hookType then
-            typeCount = typeCount + 1
-            if oldestIdx == nil then oldestIdx = i end
+    -- Write directly to our circular buffer using fixed indices
+    local listType = hookType
+    local buffer = buffers[listType]
+    local idx = writeIndices[listType]
+    
+    local old = buffer[idx]
+    if old then
+        -- Return to unallocated virtual Object Pool logic
+        if old.BtnInfo then 
+            ReleaseLogButton(old.BtnInfo) 
+            old.BtnInfo = nil
         end
+        local oldKey = GetUniqueInstanceId(old.Remote) .. "_" .. old.CachedSignature .. "_" .. old.HookType
+        logLookup[oldKey] = nil
+    else
+        counts[listType] = counts[listType] + 1
     end
-    if typeCount >= MAX_LOGS and oldestIdx then
-        local old = table.remove(logs, oldestIdx)
-        if old.Btn then old.Btn:Destroy() end
-    end
-
-    local entry = {
-        Remote      = remote,
-        CachedName  = cachedName,
-        CachedPath  = cachedPath,
-        CachedArgs  = cachedArgs,
-        CachedType  = remoteType,
-        ArgCount    = argCount,
-        Time        = timeStr,
-        HookType    = hookType,
-        CallerScript = callerScript,
-        StackCount  = 1
-    }
 
     logOrder = logOrder + 1
 
-    local btn = Instance.new("TextButton")
-    btn.Parent = ScrollList
-    btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
-    btn.Size = UDim2.new(1, -6, 0, 28)
-    btn.Font = Enum.Font.GothamMedium
-    btn.Text = ""
-    btn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    btn.TextSize = 10
-    btn.TextXAlignment = Enum.TextXAlignment.Left
-    btn.ClipsDescendants = true
-    btn.LayoutOrder = -logOrder
-
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 3)
-    btnCorner.Parent = btn
-
-    local typeColor = typeColors[remoteType] or Color3.fromRGB(149, 165, 166)
-
-    local ind = Instance.new("Frame", btn)
-    ind.Size = UDim2.new(0, 2, 1, 0)
-    ind.BorderSizePixel = 0
-    ind.BackgroundColor3 = typeColor
-
-    local badge = Instance.new("TextLabel", btn)
-    badge.Size = UDim2.new(0, 18, 0, 9)
-    badge.Position = UDim2.new(1, -21, 0, 3)
-    badge.BackgroundColor3 = hookType == "incoming" and Color3.fromRGB(120, 60, 160) or Color3.fromRGB(40, 60, 80)
-    badge.TextColor3 = Color3.fromRGB(255, 255, 255)
-    badge.Font = Enum.Font.GothamBold
-    badge.TextSize = 6
-    badge.Text = hookType == "incoming" and "IN" or "OUT"
-    badge.BorderSizePixel = 0
-    local badgeCorner = Instance.new("UICorner", badge)
-    badgeCorner.CornerRadius = UDim.new(0, 2)
-
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Parent = btn
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Position = UDim2.new(0, 6, 0, 1)
-    nameLabel.Size = UDim2.new(1, -28, 0, 14)
-    nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.Text = cachedName
-    nameLabel.TextColor3 = typeColor
-    nameLabel.TextSize = 10
-    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-
-    local infoLabel = Instance.new("TextLabel")
-    infoLabel.Parent = btn
-    infoLabel.BackgroundTransparency = 1
-    infoLabel.Position = UDim2.new(0, 6, 0, 15)
-    infoLabel.Size = UDim2.new(1, -28, 0, 11)
-    infoLabel.Font = Enum.Font.Gotham
-    infoLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
-    infoLabel.TextSize = 8
-    infoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    infoLabel.TextTruncate = Enum.TextTruncate.AtEnd
-
-    local callerTxt = callerScript and ("  " .. tostring(callerScript)) or ""
-    infoLabel.Text = timeStr .. "  •  " .. argCount .. " args" .. callerTxt
-
-    btn.MouseButton1Click:Connect(function()
-        for _, l in pairs(logs) do
-            if l.Btn then l.Btn.BackgroundColor3 = Color3.fromRGB(32, 32, 32) end
-        end
-        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 44)
-        selectedRemote = remote
-
-        local out = ConstructScript(cachedName, cachedPath, cachedArgs, argCount, remoteType)
-        if callerScript then
-            out = "-- Called by: " .. tostring(callerScript) .. "\n" .. out
-        end
-        RawCodeBox.Text = out
-        CodeBox.Text = HighlightLua(out)
-    end)
-
-    entry.Btn = btn
-    entry.InfoLabel = infoLabel
-    table.insert(logs, entry)
-    ScrollList.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y)
+    local entry = {
+        Remote          = remote,
+        CachedName      = cachedName,
+        CachedPath      = cachedPath,
+        CachedRef       = cachedRef,
+        FrozenArgs      = frozenArgs,
+        CachedSignature = cachedSignature,
+        CachedType      = remoteType,
+        ArgCount        = argCount,
+        Time            = timeStr,
+        HookType        = hookType,
+        CallerScript    = callerScript,
+        StackCount      = 1,
+        LayoutOrder     = -logOrder,
+        BtnInfo         = nil
+    }
+    
+    buffer[idx] = entry
+    logLookup[lookupKey] = entry -- Save to O(1) lookup dictionary
+    
+    -- Fast modulo circular logic index shift
+    writeIndices[listType] = (idx % MAX_LOGS) + 1
+    
+    -- Lazy loading logic (only load element from pool if currently viewing / searched for)
+    local query = searchQuery:lower()
+    local nameMatch = query == "" or cachedName:lower():find(query, 1, true) or cachedSignature:lower():find(query, 1, true)
+    local filterMatch = (activeFilter == "Out" and hookType == "outgoing") or (activeFilter == "In" and hookType == "incoming")
+    
+    if nameMatch and filterMatch then
+        CreateLogButton(entry)
+    end
+    
     updateStatus()
-    updateLogVisibility()
 end
 
 local function pack(...)
