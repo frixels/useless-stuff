@@ -13,7 +13,6 @@ local mouse = LocalPlayer:GetMouse()
 local IncestVector = game:GetService("GuiService"):GetGuiInset()
 local insetOffset = IncestVector.Y
 
-
 local function GetTextSize(TextLabel)
 	return TextService:GetTextSize(
 		TextLabel.Text,
@@ -59,7 +58,6 @@ function Janitor:Destroy()
 	self._objects = nil
 end
 
--- // 1. THEME CONFIGURATION //
 local Theme = {
 	MainBG = Color3.fromRGB(35, 35, 35),
 	SecondaryBG = Color3.fromRGB(45, 45, 45),
@@ -73,10 +71,7 @@ local Theme = {
 	Separator = Color3.fromRGB(60, 60, 60)
 }
 
--- // 2. UI COMPONENT LIBRARY //
 local UI = {}
-
-
 
 local sheet = AssetService:CreateEditableImageAsync("rbxasset://textures/ClassImages.png")
 local iconSize = sheet.Size.Y
@@ -91,8 +86,6 @@ local function getIconContent(index: number): Content
 	iconCache[index] = content
 	return content
 end
-
-
 
 function UI.CreateScreenGui()
 	local gui = Instance.new("ScreenGui")
@@ -223,8 +216,6 @@ function UI.CreateLoadingFrame(parent)
 
 	return frame, img
 end
-
--- // 3. TEMPLATE GENERATORS //
 
 local Templates = {}
 
@@ -417,7 +408,6 @@ function Templates.GetPropCategory() return PropCategoryTemplate:Clone() end
 function Templates.GetPropItem() return PropItemTemplate:Clone() end
 function Templates.GetInsertItem() return InsertItemTemplate:Clone() end
 
--- // 4. CONSTRUCT THE GUI //
 local ScreenGui = UI.CreateScreenGui()
 local MainFrame = UI.CreateMainFrame(ScreenGui)
 
@@ -447,7 +437,6 @@ HideButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- // COLOR PICKER UI //
 local ColorPickerFrame = Instance.new("Frame")
 ColorPickerFrame.Name = "ColorPicker"
 ColorPickerFrame.Parent = ScreenGui
@@ -495,7 +484,6 @@ CP_CursorHue.AnchorPoint = Vector2.new(0.5, 0)
 CP_CursorHue.BackgroundColor3 = Color3.new(1,1,1)
 CP_CursorHue.BorderColor3 = Color3.new(0,0,0)
 
--- // BRICKCOLOR PICKER UI //
 local BCFrame = Instance.new("Frame")
 BCFrame.Name = "BCPicker"
 BCFrame.Parent = ScreenGui
@@ -514,7 +502,6 @@ local BCGrid = Instance.new("UIGridLayout", BCScroll)
 BCGrid.CellSize = UDim2.new(0, 20, 0, 20)
 BCGrid.CellPadding = UDim2.new(0, 1, 0, 1)
 
--- // INSTANCE SELECTOR UI //
 local InstanceSelectIcon = Instance.new("ImageLabel")
 InstanceSelectIcon.Parent = ScreenGui
 InstanceSelectIcon.Size = UDim2.new(0, 24, 0, 24)
@@ -544,14 +531,10 @@ local PropertiesSearch = PropertiesData.Search
 PropertiesData.Layout.CellSize = UDim2.new(1, 0, 0, 22)
 PropertiesData.Layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-
 local LoadingFrame, LoadingIcon = UI.CreateLoadingFrame(ExplorerPanel)
 local IsLoadingVal = Instance.new("BoolValue", ExplorerPanel)
 IsLoadingVal.Name = "IsLoading"
 
--- // CONTEXT MENU & DIALOGS //
-
--- Rename Dialog
 local RenameFrame = Instance.new("Frame")
 RenameFrame.Name = "RenameFrame"
 RenameFrame.Parent = ScreenGui
@@ -581,7 +564,6 @@ RenameBox.Font = Enum.Font.Gotham
 RenameBox.TextSize = 14
 RenameBox.BorderSizePixel = 0
 
--- Context Menu
 local ContextMenu = Instance.new("Frame")
 ContextMenu.Name = "StudioContextMenu"
 ContextMenu.Parent = ScreenGui
@@ -637,7 +619,6 @@ local function CreateSeparator(layoutOrder)
 	return f
 end
 
--- // ENUM DROPDOWN UI //
 local EnumFrame = Instance.new("ScrollingFrame")
 EnumFrame.Name = "EnumDropdown"
 EnumFrame.Parent = ScreenGui
@@ -652,7 +633,6 @@ EnumFrame.ScrollBarImageColor3 = Theme.Scrollbar
 local EnumLayout = Instance.new("UIListLayout", EnumFrame)
 EnumLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
--- // INSERT MENU //
 local InsertFrame = Instance.new("Frame")
 InsertFrame.Name = "Insert"
 InsertFrame.Parent = ScreenGui
@@ -707,8 +687,6 @@ InsertScroll.ZIndex = 6
 local InsertGrid = Instance.new("UIGridLayout", InsertScroll)
 InsertGrid.CellSize = UDim2.new(1, 0, 0, 24)
 
-
--- // 5. CORE LOGIC //
 local function numberToLetters(n)
 	local result = ""
 
@@ -722,10 +700,34 @@ local function numberToLetters(n)
 	return result
 end
 
+local function extractNumbers(text)
+	local nums = {}
+	for n in string.gmatch(text, "[-+]?[%d%.]+[eE]?[-+]?%d*") do
+		local num = tonumber(n)
+		if num then table.insert(nums, num) end
+	end
+	return nums
+end
+
 local function ParseVector3(text)
-	local parts = string.split(text, ",")
-	if #parts == 3 then
-		return Vector3.new(tonumber(parts[1]) or 0, tonumber(parts[2]) or 0, tonumber(parts[3]) or 0)
+	local nums = extractNumbers(text)
+	if #nums == 3 then
+		return Vector3.new(nums[1], nums[2], nums[3])
+	end
+	return nil
+end
+
+local function ParseColor3(text)
+	local hex = text:match("#?([%da-fA-F]{6})")
+	if hex then
+		local num = tonumber(hex, 16)
+		if num then
+			return Color3.fromRGB(math.floor(num / 65536) % 256, math.floor(num / 256) % 256, num % 256)
+		end
+	end
+	local nums = extractNumbers(text)
+	if #nums == 3 then
+		return Color3.fromRGB(math.clamp(nums[1], 0, 255), math.clamp(nums[2], 0, 255), math.clamp(nums[3], 0, 255))
 	end
 	return nil
 end
@@ -960,9 +962,22 @@ local function StartLogic()
 					rawVal = result
 					local strValue = tostring(result)
 					if typeof(result) == "Color3" then
-						strValue = string.format("[%d, %d, %d]", result.R*255, result.G*255, result.B*255)
+						strValue = string.format("[%d, %d, %d]", math.floor(result.R*255), math.floor(result.G*255), math.floor(result.B*255))
 					elseif typeof(result) == "Vector3" then
 						strValue = string.format("%.3f, %.3f, %.3f", result.X, result.Y, result.Z)
+					elseif typeof(result) == "Vector2" then
+						strValue = string.format("%.3f, %.3f", result.X, result.Y)
+					elseif typeof(result) == "UDim" then
+						strValue = string.format("%.3f, %d", result.Scale, result.Offset)
+					elseif typeof(result) == "UDim2" then
+						strValue = string.format("{%.3f, %d}, {%.3f, %d}", result.X.Scale, result.X.Offset, result.Y.Scale, result.Y.Offset)
+					elseif typeof(result) == "CFrame" then
+						local pos = result.Position
+						strValue = string.format("%.3f, %.3f, %.3f", pos.X, pos.Y, pos.Z)
+					elseif typeof(result) == "Rect" then
+						strValue = string.format("%.3f, %.3f, %.3f, %.3f", result.Min.X, result.Min.Y, result.Max.X, result.Max.Y)
+					elseif typeof(result) == "NumberRange" then
+						strValue = string.format("%.3f, %.3f", result.Min, result.Max)
 					end
 					table.insert(props, {
 						ClassName = "Properties", 
@@ -1021,9 +1036,7 @@ local function StartLogic()
 		image.ImageContent = getIconContent(index)
 	end
 
-
 	local function updateInsertList(list, parentObj)
-
 		for _, v in pairs(InsertScroll:GetChildren()) do if v.ClassName ~= "UIGridLayout" then v:Destroy() end end
 		task.spawn(function()
 			local connections = {}
@@ -1281,7 +1294,6 @@ local function StartLogic()
 		ContextMenu.Size = UDim2.new(0, 200, 0, YSize)
 	end
 
-
 	local propertiesMaid = Janitor.new()
 
 	local function updateGuiProperties(object)
@@ -1300,9 +1312,12 @@ local function StartLogic()
 		end
 
 		local function SetProperty(propName, value)
+			local anySuccess = false
 			for _, o in pairs(targetObjects) do
-				pcall(function() o[propName] = value end)
+				local ok = pcall(function() o[propName] = value end)
+				if ok then anySuccess = true end
 			end
+			return anySuccess
 		end
 
 		local aggregatedProps = {}
@@ -1341,9 +1356,22 @@ local function StartLogic()
 
 			local displayVal = info.IsMixed and "..." or tostring(info.Val)
 			if typeof(info.Val) == "Color3" and not info.IsMixed then
-				displayVal = string.format("[%d, %d, %d]", info.Val.R*255, info.Val.G*255, info.Val.B*255)
+				displayVal = string.format("[%d, %d, %d]", math.floor(info.Val.R*255), math.floor(info.Val.G*255), math.floor(info.Val.B*255))
 			elseif typeof(info.Val) == "Vector3" and not info.IsMixed then
 				displayVal = string.format("%.3f, %.3f, %.3f", info.Val.X, info.Val.Y, info.Val.Z)
+			elseif typeof(info.Val) == "Vector2" and not info.IsMixed then
+				displayVal = string.format("%.3f, %.3f", info.Val.X, info.Val.Y)
+			elseif typeof(info.Val) == "UDim" and not info.IsMixed then
+				displayVal = string.format("%.3f, %d", info.Val.Scale, info.Val.Offset)
+			elseif typeof(info.Val) == "UDim2" and not info.IsMixed then
+				displayVal = string.format("{%.3f, %d}, {%.3f, %d}", info.Val.X.Scale, info.Val.X.Offset, info.Val.Y.Scale, info.Val.Y.Offset)
+			elseif typeof(info.Val) == "CFrame" and not info.IsMixed then
+				local pos = info.Val.Position
+				displayVal = string.format("%.3f, %.3f, %.3f", pos.X, pos.Y, pos.Z)
+			elseif typeof(info.Val) == "Rect" and not info.IsMixed then
+				displayVal = string.format("%.3f, %.3f, %.3f, %.3f", info.Val.Min.X, info.Val.Min.Y, info.Val.Max.X, info.Val.Max.Y)
+			elseif typeof(info.Val) == "NumberRange" and not info.IsMixed then
+				displayVal = string.format("%.3f, %.3f", info.Val.Min, info.Val.Max)
 			end
 
 			table.insert(aggregatedProps, {
@@ -1365,6 +1393,7 @@ local function StartLogic()
 
 		local currentCategory = nil
 		local layoutOrder = 0
+		local liveUpdaters = {}
 
 		for _, v in pairs(aggregatedProps) do
 			if v.ClassName ~= currentCategory then
@@ -1378,7 +1407,6 @@ local function StartLogic()
 				cat.Parent = PropertiesScroll
 				cat.Unpack.Rotation = 0
 
-				-- FIX #1: Use v.ClassName directly instead of currentCategory in the closure
 				local categoryName = v.ClassName
 				propertiesMaid:Add(cat.Unpack.MouseButton1Click:Connect(function()
 					local isExpanded = (cat.Unpack.Rotation == 0)
@@ -1404,7 +1432,6 @@ local function StartLogic()
 			local inputUI = nil
 
 			if valType == "boolean" then
-				-- FIX #2: Boolean checkbox with proper state tracking
 				inputUI = Instance.new("ImageButton")
 				inputUI.Size = UDim2.new(0, 16, 0, 16)
 				inputUI.Position = UDim2.new(0.42, 0, 0.15, 0)
@@ -1426,11 +1453,38 @@ local function StartLogic()
 					checkmark.Visible = v.RawValue
 				end
 
-				-- Create a table to track current state
 				local stateTracker = {
 					currentValue = v.RawValue,
 					isMixed = v.IsMixed
 				}
+
+				local function refreshBool()
+					if not pItem.Visible then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success and typeof(val) == "boolean" then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
+						end
+					end
+
+					if allSame and firstVal ~= nil then
+						stateTracker.currentValue = firstVal
+						stateTracker.isMixed = false
+						checkmark.Visible = firstVal
+						checkmark.BackgroundTransparency = 0
+					else
+						stateTracker.isMixed = true
+						checkmark.Visible = true
+						checkmark.BackgroundTransparency = 0.5
+					end
+				end
 
 				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
 					local newVal
@@ -1441,49 +1495,24 @@ local function StartLogic()
 						newVal = not stateTracker.currentValue
 					end
 
-					SetProperty(v.Name, newVal)
-
-					-- Update tracked state
-					stateTracker.currentValue = newVal
-
-					-- Update UI
-					checkmark.Visible = newVal
-					checkmark.BackgroundTransparency = 0
+					local success = SetProperty(v.Name, newVal)
+					if not success then
+						refreshBool()
+					else
+						stateTracker.currentValue = newVal
+						checkmark.Visible = newVal
+						checkmark.BackgroundTransparency = 0
+					end
 				end))
 
-				-- Property Change Signal - updates UI when property changes externally
+				table.insert(liveUpdaters, refreshBool)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							-- Check if all selected objects have the same value
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local val = pcall(function() return o[v.Name] end)
-								if val then
-									if firstVal == nil then
-										firstVal = o[v.Name]
-									elseif firstVal ~= o[v.Name] then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame and firstVal ~= nil then
-								stateTracker.currentValue = firstVal
-								stateTracker.isMixed = false
-								checkmark.Visible = firstVal
-								checkmark.BackgroundTransparency = 0
-							else
-								stateTracker.isMixed = true
-								checkmark.Visible = true
-								checkmark.BackgroundTransparency = 0.5
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshBool))
 					end
 				end
 
@@ -1499,6 +1528,31 @@ local function StartLogic()
 				inputUI.TextSize = 12
 				inputUI.TextXAlignment = Enum.TextXAlignment.Left
 				inputUI.Parent = pItem
+
+				local function refreshEnum()
+					if not pItem.Visible then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success and typeof(val) == "EnumItem" then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
+						end
+					end
+
+					if allSame and firstVal ~= nil then
+						inputUI.Text = "  " .. tostring(firstVal)
+						inputUI.TextColor3 = Theme.Text
+					else
+						inputUI.Text = "  <Mixed>"
+						inputUI.TextColor3 = Theme.TextDim
+					end
+				end
 
 				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
 					EnumMaid:Clean()
@@ -1524,10 +1578,14 @@ local function StartLogic()
 						btn.ZIndex = 22
 
 						btn.MouseButton1Click:Connect(function()
-							SetProperty(v.Name, item)
+							local success = SetProperty(v.Name, item)
 							EnumFrame.Visible = false
-							inputUI.Text = "  " .. tostring(item)
-							inputUI.TextColor3 = Theme.Text
+							if not success then
+								refreshEnum()
+							else
+								inputUI.Text = "  " .. tostring(item)
+								inputUI.TextColor3 = Theme.Text
+							end
 						end)
 
 						btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Theme.Accent end)
@@ -1537,35 +1595,14 @@ local function StartLogic()
 					EnumFrame.Size = UDim2.fromOffset(inputUI.AbsoluteSize.X,math.min(6,#enumItems) * 20)
 				end))
 
-				-- Property Change Signal
+				table.insert(liveUpdaters, refreshEnum)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local success, val = pcall(function() return o[v.Name] end)
-								if success then
-									if firstVal == nil then
-										firstVal = val
-									elseif firstVal ~= val then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame and firstVal ~= nil then
-								inputUI.Text = "  " .. tostring(firstVal)
-								inputUI.TextColor3 = Theme.Text
-							else
-								inputUI.Text = "  <Mixed>"
-								inputUI.TextColor3 = Theme.TextDim
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshEnum))
 					end
 				end
 
@@ -1583,12 +1620,12 @@ local function StartLogic()
 				inputUI.ClearTextOnFocus = false
 				inputUI.Parent = pItem
 
-
 				local shouldShowSlider = not v.IsMixed and ((v.RawValue >= 0 and v.RawValue <= 1) or 
 					(string.find(v.Name, "Transparency")) or 
 					(string.find(v.Name, "Reflectance")))
 
 				local sliderFill = nil
+				local isDraggingSlider = false
 				if shouldShowSlider then
 					local sliderFrame = Instance.new("Frame", pItem)
 					sliderFrame.Name = "SliderBar"
@@ -1613,10 +1650,8 @@ local function StartLogic()
 					sliderBtn.Text = ""
 					sliderBtn.ZIndex = 4
 
-					local sliderDrag = Janitor.new()
-
 					sliderBtn.MouseButton1Down:Connect(function()
-						local dragging = true
+						isDraggingSlider = true
 						local mouseMove 
 						local mouseUp
 
@@ -1632,6 +1667,7 @@ local function StartLogic()
 
 						mouseUp = UserInputService.InputEnded:Connect(function(input)
 							if input.UserInputType == Enum.UserInputType.MouseButton1 then
+								isDraggingSlider = false
 								mouseMove:Disconnect()
 								mouseUp:Disconnect()
 							end
@@ -1648,49 +1684,59 @@ local function StartLogic()
 					propertiesMaid:Add(function() sliderFrame:Destroy() end)
 				end
 
+				local function refreshNumber()
+					if not pItem.Visible or isDraggingSlider or inputUI:IsFocused() then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success and typeof(val) == "number" then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
+						end
+					end
+
+					if allSame and firstVal ~= nil then
+						inputUI.Text = string.format("%.3f", firstVal)
+						inputUI.PlaceholderText = ""
+						if sliderFill then
+							local ratio = math.clamp(firstVal, 0, 1)
+							sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+						end
+					else
+						inputUI.Text = ""
+						inputUI.PlaceholderText = "..."
+					end
+				end
+
 				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
-					if enter then
-						local num = tonumber(inputUI.Text) or 0
-						SetProperty(v.Name, num)
+					if not enter then
+						refreshNumber()
+						return
+					end
+					local num = tonumber(inputUI.Text)
+					if num then
+						local success = SetProperty(v.Name, num)
+						if not success then
+							refreshNumber()
+						end
+					else
+						refreshNumber()
 					end
 				end))
 
-				-- Property Change Signal
+				table.insert(liveUpdaters, refreshNumber)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local success, val = pcall(function() return o[v.Name] end)
-								if success then
-									if firstVal == nil then
-										firstVal = val
-									elseif firstVal ~= val then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame and firstVal ~= nil then
-								if typeof(firstVal) == "number" then
-									inputUI.Text = string.format("%.3f", firstVal)
-									inputUI.PlaceholderText = ""
-									-- Update slider if exists
-									if sliderFill then
-										local ratio = math.clamp(firstVal, 0, 1)
-										sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
-									end
-								end
-							else
-								inputUI.Text = ""
-								inputUI.PlaceholderText = "..."
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshNumber))
 					end
 				end
 
@@ -1715,15 +1761,51 @@ local function StartLogic()
 				colorBtn.Text = ""
 				colorBtn.BorderColor3 = Theme.TextDim
 
-				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
-					if enter then
-						local r, g, b = inputUI.Text:match("%[(%d+), (%d+), (%d+)%]")
-						if r and g and b then
-							SetProperty(v.Name, Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b)))
+				local function refreshColor()
+					if not pItem.Visible or inputUI:IsFocused() then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success and typeof(val) == "Color3" then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
 						end
 					end
-				end))
 
+					if allSame and firstVal ~= nil then
+						colorBtn.BackgroundColor3 = firstVal
+						inputUI.Text = string.format("[%d, %d, %d]", math.floor(firstVal.R*255), math.floor(firstVal.G*255), math.floor(firstVal.B*255))
+						inputUI.PlaceholderText = ""
+					else
+						colorBtn.BackgroundColor3 = Color3.new(1,1,1)
+						inputUI.Text = ""
+						inputUI.PlaceholderText = "..."
+					end
+				end
+
+				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+					if not enter then
+						refreshColor()
+						return
+					end
+					local col = ParseColor3(inputUI.Text)
+					if col then
+						local success = SetProperty(v.Name, col)
+						if not success then
+							refreshColor()
+						else
+							colorBtn.BackgroundColor3 = col
+							inputUI.Text = string.format("[%d, %d, %d]", math.floor(col.R*255), math.floor(col.G*255), math.floor(col.B*255))
+						end
+					else
+						refreshColor()
+					end
+				end))
 
 				propertiesMaid:Add(colorBtn.MouseButton1Click:Connect(function()
 					BrickColorMaid:Clean()
@@ -1748,7 +1830,7 @@ local function StartLogic()
 						CP_SV.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
 						SetProperty(v.Name, newCol)
 						colorBtn.BackgroundColor3 = newCol
-						inputUI.Text = string.format("[%d, %d, %d]", newCol.R*255, newCol.G*255, newCol.B*255)
+						inputUI.Text = string.format("[%d, %d, %d]", math.floor(newCol.R*255), math.floor(newCol.G*255), math.floor(newCol.B*255))
 					end
 
 					ColorMaid:Add(CP_Hue.MouseButton1Down:Connect(function()
@@ -1796,39 +1878,14 @@ local function StartLogic()
 					end))
 				end))
 
-				-- Property Change Signal
+				table.insert(liveUpdaters, refreshColor)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local success, val = pcall(function() return o[v.Name] end)
-								if success then
-									if firstVal == nil then
-										firstVal = val
-									elseif firstVal ~= val then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame and firstVal ~= nil then
-								if typeof(firstVal) == "Color3" then
-									colorBtn.BackgroundColor3 = firstVal
-									inputUI.Text = string.format("[%d, %d, %d]", firstVal.R*255, firstVal.G*255, firstVal.B*255)
-									inputUI.PlaceholderText = ""
-								end
-							else
-								colorBtn.BackgroundColor3 = Color3.new(1,1,1)
-								inputUI.Text = ""
-								inputUI.PlaceholderText = "..."
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshColor))
 					end
 				end
 
@@ -1844,6 +1901,31 @@ local function StartLogic()
 				inputUI.TextSize = 12
 				inputUI.TextXAlignment = Enum.TextXAlignment.Left
 				inputUI.Parent = pItem
+
+				local function refreshBrickColor()
+					if not pItem.Visible then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success and typeof(val) == "BrickColor" then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
+						end
+					end
+
+					if allSame and firstVal ~= nil then
+						inputUI.Text = "  " .. tostring(firstVal)
+						inputUI.TextColor3 = firstVal.Color
+					else
+						inputUI.Text = "  <Mixed>"
+						inputUI.TextColor3 = Theme.TextDim
+					end
+				end
 
 				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
 					BrickColorMaid:Clean()
@@ -1867,11 +1949,15 @@ local function StartLogic()
 							btn = BCScroll:FindFirstChild(tostring(i))
 						end
 						BrickColorMaid:Add(btn.MouseButton1Click:Connect(function()
-							SetProperty(v.Name, bc)
+							local success = SetProperty(v.Name, bc)
 							BrickColorMaid:Clean()
 							BCFrame.Visible = false
-							inputUI.Text = "  " .. tostring(bc)
-							inputUI.TextColor3 = bc.Color
+							if not success then
+								refreshBrickColor()
+							else
+								inputUI.Text = "  " .. tostring(bc)
+								inputUI.TextColor3 = bc.Color
+							end
 						end))
 						local tt = Instance.new("TextLabel", btn)
 						tt.Visible = false
@@ -1881,37 +1967,14 @@ local function StartLogic()
 					BCScroll.CanvasSize = UDim2.new(0,0,0, math.ceil(128/10) * 21)
 				end))
 
-				-- Property Change Signal
+				table.insert(liveUpdaters, refreshBrickColor)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local success, val = pcall(function() return o[v.Name] end)
-								if success then
-									if firstVal == nil then
-										firstVal = val
-									elseif firstVal ~= val then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame and firstVal ~= nil then
-								if typeof(firstVal) == "BrickColor" then
-									inputUI.Text = "  " .. tostring(firstVal)
-									inputUI.TextColor3 = firstVal.Color
-								end
-							else
-								inputUI.Text = "  <Mixed>"
-								inputUI.TextColor3 = Theme.TextDim
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshBrickColor))
 					end
 				end
 
@@ -1932,6 +1995,33 @@ local function StartLogic()
 				inputUI.TextXAlignment = Enum.TextXAlignment.Left
 				inputUI.Parent = pItem
 
+				local function refreshInstance()
+					if not pItem.Visible then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
+						end
+					end
+
+					if allSame then
+						if firstVal ~= nil and typeof(firstVal) == "Instance" then
+							inputUI.Text = "  " .. firstVal.Name
+						elseif firstVal == nil then
+							inputUI.Text = "  nil"
+						end
+					else
+						inputUI.Text = "  <Mixed>"
+					end
+				end
+
 				propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
 					InstanceSelectorState.Active = true
 					InstanceSelectorState.Object = object
@@ -1939,41 +2029,23 @@ local function StartLogic()
 					inputUI.Text = "  (Select in Explorer)"
 				end))
 
-				-- Property Change Signal
+				propertiesMaid:Add(inputUI.MouseButton2Click:Connect(function()
+					SetProperty(v.Name, nil)
+					refreshInstance()
+				end))
+
+				table.insert(liveUpdaters, refreshInstance)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local success, val = pcall(function() return o[v.Name] end)
-								if success then
-									if firstVal == nil then
-										firstVal = val
-									elseif firstVal ~= val then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame then
-								if firstVal ~= nil and typeof(firstVal) == "Instance" then
-									inputUI.Text = "  " .. firstVal.Name
-								elseif firstVal == nil then
-									inputUI.Text = "  nil"
-								end
-							else
-								inputUI.Text = "  <Mixed>"
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshInstance))
 					end
 				end
 
-			elseif valType == "string" or valType == "Vector3" then
+			elseif valType == "string" or valType == "Vector3" or valType == "Vector2" or valType == "CFrame" or valType == "UDim" or valType == "UDim2" or valType == "Rect" or valType == "NumberRange" then
 				inputUI = Instance.new("TextBox")
 				inputUI.Size = UDim2.new(0.6, -5, 1, 0)
 				inputUI.Position = UDim2.new(0.4, 2, 0, 0)
@@ -1987,50 +2059,115 @@ local function StartLogic()
 				inputUI.ClearTextOnFocus = false
 				inputUI.Parent = pItem
 
-				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
-					if enter then
-						if valType == "Vector3" then
-							local vec = ParseVector3(inputUI.Text)
-							if vec then SetProperty(v.Name, vec) end
-						else
-							SetProperty(v.Name, inputUI.Text)
+				local function refreshText()
+					if not pItem.Visible or inputUI:IsFocused() then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
 						end
+					end
+
+					if allSame and firstVal ~= nil then
+						local str = ""
+						if typeof(firstVal) == "Vector3" then
+							str = string.format("%.3f, %.3f, %.3f", firstVal.X, firstVal.Y, firstVal.Z)
+						elseif typeof(firstVal) == "Vector2" then
+							str = string.format("%.3f, %.3f", firstVal.X, firstVal.Y)
+						elseif typeof(firstVal) == "UDim" then
+							str = string.format("%.3f, %d", firstVal.Scale, firstVal.Offset)
+						elseif typeof(firstVal) == "UDim2" then
+							str = string.format("{%.3f, %d}, {%.3f, %d}", firstVal.X.Scale, firstVal.X.Offset, firstVal.Y.Scale, firstVal.Y.Offset)
+						elseif typeof(firstVal) == "CFrame" then
+							local pos = firstVal.Position
+							str = string.format("%.3f, %.3f, %.3f", pos.X, pos.Y, pos.Z)
+						elseif typeof(firstVal) == "Rect" then
+							str = string.format("%.3f, %.3f, %.3f, %.3f", firstVal.Min.X, firstVal.Min.Y, firstVal.Max.X, firstVal.Max.Y)
+						elseif typeof(firstVal) == "NumberRange" then
+							str = string.format("%.3f, %.3f", firstVal.Min, firstVal.Max)
+						elseif typeof(firstVal) == "string" then
+							str = firstVal
+						else
+							str = tostring(firstVal)
+						end
+						inputUI.Text = str
+						inputUI.PlaceholderText = ""
+					else
+						inputUI.Text = ""
+						inputUI.PlaceholderText = "..."
+					end
+				end
+
+				propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+					if not enter then
+						refreshText()
+						return
+					end
+					local text = inputUI.Text
+					local parsedVal = nil
+					if valType == "string" then
+						parsedVal = text
+					elseif valType == "Vector3" then
+						parsedVal = ParseVector3(text)
+					elseif valType == "Vector2" then
+						local nums = extractNumbers(text)
+						if #nums == 2 then parsedVal = Vector2.new(nums[1], nums[2]) end
+					elseif valType == "UDim" then
+						local nums = extractNumbers(text)
+						if #nums >= 2 then parsedVal = UDim.new(nums[1], math.floor(nums[2])) end
+					elseif valType == "UDim2" then
+						local nums = extractNumbers(text)
+						if #nums >= 4 then parsedVal = UDim2.new(nums[1], math.floor(nums[2]), nums[3], math.floor(nums[4])) end
+					elseif valType == "Rect" then
+						local nums = extractNumbers(text)
+						if #nums >= 4 then parsedVal = Rect.new(nums[1], nums[2], nums[3], nums[4]) end
+					elseif valType == "NumberRange" then
+						local nums = extractNumbers(text)
+						if #nums == 1 then
+							parsedVal = NumberRange.new(nums[1])
+						elseif #nums >= 2 then
+							parsedVal = NumberRange.new(math.min(nums[1], nums[2]), math.max(nums[1], nums[2]))
+						end
+					elseif valType == "CFrame" then
+						local nums = extractNumbers(text)
+						if #nums == 3 then
+							local currentCF = nil
+							pcall(function() currentCF = targetObjects[1][v.Name] end)
+							if typeof(currentCF) == "CFrame" then
+								parsedVal = CFrame.new(nums[1], nums[2], nums[3]) * currentCF.Rotation
+							else
+								parsedVal = CFrame.new(nums[1], nums[2], nums[3])
+							end
+						elseif #nums >= 12 then
+							parsedVal = CFrame.new(table.unpack(nums))
+						end
+					end
+
+					if parsedVal ~= nil then
+						local success = SetProperty(v.Name, parsedVal)
+						if not success then
+							refreshText()
+						end
+					else
+						refreshText()
 					end
 				end))
 
-				-- Property Change Signal
+				table.insert(liveUpdaters, refreshText)
+
 				for _, obj in pairs(targetObjects) do
 					local success, sig = pcall(function()
 						return obj:GetPropertyChangedSignal(v.Name)
 					end)
 					if success and sig then
-						propertiesMaid:Add(sig:Connect(function()
-							local firstVal = nil
-							local allSame = true
-							for _, o in pairs(targetObjects) do
-								local success, val = pcall(function() return o[v.Name] end)
-								if success then
-									if firstVal == nil then
-										firstVal = val
-									elseif firstVal ~= val then
-										allSame = false
-										break
-									end
-								end
-							end
-
-							if allSame and firstVal ~= nil then
-								if typeof(firstVal) == "Vector3" then
-									inputUI.Text = string.format("%.3f, %.3f, %.3f", firstVal.X, firstVal.Y, firstVal.Z)
-								elseif typeof(firstVal) == "string" then
-									inputUI.Text = firstVal
-								end
-								inputUI.PlaceholderText = ""
-							else
-								inputUI.Text = ""
-								inputUI.PlaceholderText = "..."
-							end
-						end))
+						propertiesMaid:Add(sig:Connect(refreshText))
 					end
 				end
 
@@ -2045,6 +2182,40 @@ local function StartLogic()
 				inputUI.TextSize = 12
 				inputUI.TextXAlignment = Enum.TextXAlignment.Left
 				inputUI.Parent = pItem
+
+				local function refreshGeneric()
+					if not pItem.Visible then return end
+					local firstVal = nil
+					local allSame = true
+					for _, o in pairs(targetObjects) do
+						local success, val = pcall(function() return o[v.Name] end)
+						if success then
+							if firstVal == nil then
+								firstVal = val
+							elseif firstVal ~= val then
+								allSame = false
+								break
+							end
+						end
+					end
+
+					if allSame and firstVal ~= nil then
+						inputUI.Text = tostring(firstVal)
+					else
+						inputUI.Text = "..."
+					end
+				end
+
+				table.insert(liveUpdaters, refreshGeneric)
+
+				for _, obj in pairs(targetObjects) do
+					local success, sig = pcall(function()
+						return obj:GetPropertyChangedSignal(v.Name)
+					end)
+					if success and sig then
+						propertiesMaid:Add(sig:Connect(refreshGeneric))
+					end
+				end
 			end
 		end
 
@@ -2138,43 +2309,54 @@ local function StartLogic()
 					inputUI.TextXAlignment = Enum.TextXAlignment.Left
 					inputUI.Parent = pItem
 
+					local function refreshAttrBool()
+						if not pItem.Visible then return end
+						local firstVal = nil
+						local allSame = true
+						for _, o in pairs(targetObjects) do
+							local success, val = pcall(function() return o:GetAttribute(attrName) end)
+							if success and typeof(val) == "boolean" then
+								if firstVal == nil then
+									firstVal = val
+								elseif firstVal ~= val then
+									allSame = false
+									break
+								end
+							end
+						end
+
+						if allSame and firstVal ~= nil then
+							inputUI.Text = "  " .. tostring(firstVal)
+							inputUI.TextColor3 = firstVal and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
+						else
+							inputUI.Text = "  <Mixed>"
+							inputUI.TextColor3 = Theme.TextDim
+						end
+					end
+
 					propertiesMaid:Add(inputUI.MouseButton1Click:Connect(function()
 						local newVal = not (attrData.IsMixed and true or attrData.Val)
+						local anySuccess = false
 						for _, obj in pairs(targetObjects) do
-							pcall(function() obj:SetAttribute(attrName, newVal) end)
+							local ok = pcall(function() obj:SetAttribute(attrName, newVal) end)
+							if ok then anySuccess = true end
 						end
-						inputUI.Text = "  " .. tostring(newVal)
-						inputUI.TextColor3 = newVal and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
+						if anySuccess then
+							inputUI.Text = "  " .. tostring(newVal)
+							inputUI.TextColor3 = newVal and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
+						else
+							refreshAttrBool()
+						end
 					end))
+
+					table.insert(liveUpdaters, refreshAttrBool)
 
 					for _, obj in pairs(targetObjects) do
 						local success, sig = pcall(function()
 							return obj:GetAttributeChangedSignal(attrName)
 						end)
 						if success and sig then
-							propertiesMaid:Add(sig:Connect(function()
-								local firstVal = nil
-								local allSame = true
-								for _, o in pairs(targetObjects) do
-									local success, val = pcall(function() return o:GetAttribute(attrName) end)
-									if success then
-										if firstVal == nil then
-											firstVal = val
-										elseif firstVal ~= val then
-											allSame = false
-											break
-										end
-									end
-								end
-
-								if allSame and firstVal ~= nil then
-									inputUI.Text = "  " .. tostring(firstVal)
-									inputUI.TextColor3 = firstVal and Color3.fromRGB(100, 200, 100) or Color3.fromRGB(200, 100, 100)
-								else
-									inputUI.Text = "  <Mixed>"
-									inputUI.TextColor3 = Theme.TextDim
-								end
-							end))
+							propertiesMaid:Add(sig:Connect(refreshAttrBool))
 						end
 					end
 
@@ -2192,45 +2374,57 @@ local function StartLogic()
 					inputUI.ClearTextOnFocus = false
 					inputUI.Parent = pItem
 
-					propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
-						if enter then
-							local num = tonumber(inputUI.Text)
-							if num then
-								for _, obj in pairs(targetObjects) do
-									pcall(function() obj:SetAttribute(attrName, num) end)
+					local function refreshAttrNumber()
+						if not pItem.Visible or inputUI:IsFocused() then return end
+						local firstVal = nil
+						local allSame = true
+						for _, o in pairs(targetObjects) do
+							local success, val = pcall(function() return o:GetAttribute(attrName) end)
+							if success and typeof(val) == "number" then
+								if firstVal == nil then
+									firstVal = val
+								elseif firstVal ~= val then
+									allSame = false
+									break
 								end
 							end
 						end
+
+						if allSame and firstVal ~= nil then
+							inputUI.Text = tostring(firstVal)
+							inputUI.PlaceholderText = ""
+						else
+							inputUI.Text = ""
+							inputUI.PlaceholderText = "..."
+						end
+					end
+
+					propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+						if not enter then
+							refreshAttrNumber()
+							return
+						end
+						local num = tonumber(inputUI.Text)
+						if num then
+							local anySuccess = false
+							for _, obj in pairs(targetObjects) do
+								local ok = pcall(function() obj:SetAttribute(attrName, num) end)
+								if ok then anySuccess = true end
+							end
+							if not anySuccess then refreshAttrNumber() end
+						else
+							refreshAttrNumber()
+						end
 					end))
+
+					table.insert(liveUpdaters, refreshAttrNumber)
 
 					for _, obj in pairs(targetObjects) do
 						local success, sig = pcall(function()
 							return obj:GetAttributeChangedSignal(attrName)
 						end)
 						if success and sig then
-							propertiesMaid:Add(sig:Connect(function()
-								local firstVal = nil
-								local allSame = true
-								for _, o in pairs(targetObjects) do
-									local success, val = pcall(function() return o:GetAttribute(attrName) end)
-									if success then
-										if firstVal == nil then
-											firstVal = val
-										elseif firstVal ~= val then
-											allSame = false
-											break
-										end
-									end
-								end
-
-								if allSame and firstVal ~= nil then
-									inputUI.Text = tostring(firstVal)
-									inputUI.PlaceholderText = ""
-								else
-									inputUI.Text = ""
-									inputUI.PlaceholderText = "..."
-								end
-							end))
+							propertiesMaid:Add(sig:Connect(refreshAttrNumber))
 						end
 					end
 
@@ -2247,9 +2441,9 @@ local function StartLogic()
 						elseif valType == "Vector2" then
 							displayText = string.format("%.3f, %.3f", attrData.Val.X, attrData.Val.Y)
 						elseif valType == "Color3" then
-							displayText = string.format("[%d, %d, %d]", attrData.Val.R*255, attrData.Val.G*255, attrData.Val.B*255)
+							displayText = string.format("[%d, %d, %d]", math.floor(attrData.Val.R*255), math.floor(attrData.Val.G*255), math.floor(attrData.Val.B*255))
 						elseif valType == "UDim2" then
-							displayText = string.format("{%.3f, %.3f}, {%.3f, %.3f}", attrData.Val.X.Scale, attrData.Val.X.Offset, attrData.Val.Y.Scale, attrData.Val.Y.Offset)
+							displayText = string.format("{%.3f, %d}, {%.3f, %d}", attrData.Val.X.Scale, attrData.Val.X.Offset, attrData.Val.Y.Scale, attrData.Val.Y.Offset)
 						else
 							displayText = tostring(attrData.Val)
 						end
@@ -2264,80 +2458,84 @@ local function StartLogic()
 					inputUI.ClearTextOnFocus = false
 					inputUI.Parent = pItem
 
-					propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
-						if enter then
-							local text = inputUI.Text
-							if valType == "Vector3" then
-								local vec = ParseVector3(text)
-								if vec then
-									for _, obj in pairs(targetObjects) do
-										pcall(function() obj:SetAttribute(attrName, vec) end)
-									end
-								end
-							elseif valType == "Vector2" then
-								local x, y = text:match("([^,]+),%s*([^,]+)")
-								if x and y then
-									local vec = Vector2.new(tonumber(x) or 0, tonumber(y) or 0)
-									for _, obj in pairs(targetObjects) do
-										pcall(function() obj:SetAttribute(attrName, vec) end)
-									end
-								end
-							elseif valType == "Color3" then
-								local r, g, b = text:match("%[(%d+),%s*(%d+),%s*(%d+)%]")
-								if r and g and b then
-									local col = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
-									for _, obj in pairs(targetObjects) do
-										pcall(function() obj:SetAttribute(attrName, col) end)
-									end
-								end
-							else
-								for _, obj in pairs(targetObjects) do
-									pcall(function() obj:SetAttribute(attrName, text) end)
+					local function refreshAttrComplex()
+						if not pItem.Visible or inputUI:IsFocused() then return end
+						local firstVal = nil
+						local allSame = true
+						for _, o in pairs(targetObjects) do
+							local success, val = pcall(function() return o:GetAttribute(attrName) end)
+							if success then
+								if firstVal == nil then
+									firstVal = val
+								elseif firstVal ~= val then
+									allSame = false
+									break
 								end
 							end
 						end
+
+						if allSame and firstVal ~= nil then
+							local currentDisplay = ""
+							if typeof(firstVal) == "Vector3" then
+								currentDisplay = string.format("%.3f, %.3f, %.3f", firstVal.X, firstVal.Y, firstVal.Z)
+							elseif typeof(firstVal) == "Vector2" then
+								currentDisplay = string.format("%.3f, %.3f", firstVal.X, firstVal.Y)
+							elseif typeof(firstVal) == "Color3" then
+								currentDisplay = string.format("[%d, %d, %d]", math.floor(firstVal.R*255), math.floor(firstVal.G*255), math.floor(firstVal.B*255))
+							elseif typeof(firstVal) == "UDim2" then
+								currentDisplay = string.format("{%.3f, %d}, {%.3f, %d}", firstVal.X.Scale, firstVal.X.Offset, firstVal.Y.Scale, firstVal.Y.Offset)
+							else
+								currentDisplay = tostring(firstVal)
+							end
+							inputUI.Text = currentDisplay
+							inputUI.PlaceholderText = ""
+						else
+							inputUI.Text = ""
+							inputUI.PlaceholderText = "..."
+						end
+					end
+
+					propertiesMaid:Add(inputUI.FocusLost:Connect(function(enter)
+						if not enter then
+							refreshAttrComplex()
+							return
+						end
+						local text = inputUI.Text
+						local parsed = nil
+						if valType == "Vector3" then
+							parsed = ParseVector3(text)
+						elseif valType == "Vector2" then
+							local nums = extractNumbers(text)
+							if #nums == 2 then parsed = Vector2.new(nums[1], nums[2]) end
+						elseif valType == "Color3" then
+							parsed = ParseColor3(text)
+						elseif valType == "UDim2" then
+							local nums = extractNumbers(text)
+							if #nums >= 4 then parsed = UDim2.new(nums[1], math.floor(nums[2]), nums[3], math.floor(nums[4])) end
+						else
+							parsed = text
+						end
+
+						if parsed ~= nil then
+							local anySuccess = false
+							for _, obj in pairs(targetObjects) do
+								local ok = pcall(function() obj:SetAttribute(attrName, parsed) end)
+								if ok then anySuccess = true end
+							end
+							if not anySuccess then refreshAttrComplex() end
+						else
+							refreshAttrComplex()
+						end
 					end))
+
+					table.insert(liveUpdaters, refreshAttrComplex)
 
 					for _, obj in pairs(targetObjects) do
 						local success, sig = pcall(function()
 							return obj:GetAttributeChangedSignal(attrName)
 						end)
 						if success and sig then
-							propertiesMaid:Add(sig:Connect(function()
-								local firstVal = nil
-								local allSame = true
-								for _, o in pairs(targetObjects) do
-									local success, val = pcall(function() return o:GetAttribute(attrName) end)
-									if success then
-										if firstVal == nil then
-											firstVal = val
-										elseif firstVal ~= val then
-											allSame = false
-											break
-										end
-									end
-								end
-
-								if allSame and firstVal ~= nil then
-									local displayText = ""
-									if typeof(firstVal) == "Vector3" then
-										displayText = string.format("%.3f, %.3f, %.3f", firstVal.X, firstVal.Y, firstVal.Z)
-									elseif typeof(firstVal) == "Vector2" then
-										displayText = string.format("%.3f, %.3f", firstVal.X, firstVal.Y)
-									elseif typeof(firstVal) == "Color3" then
-										displayText = string.format("[%d, %d, %d]", firstVal.R*255, firstVal.G*255, firstVal.B*255)
-									elseif typeof(firstVal) == "UDim2" then
-										displayText = string.format("{%.3f, %.3f}, {%.3f, %.3f}", firstVal.X.Scale, firstVal.X.Offset, firstVal.Y.Scale, firstVal.Y.Offset)
-									else
-										displayText = tostring(firstVal)
-									end
-									inputUI.Text = displayText
-									inputUI.PlaceholderText = ""
-								else
-									inputUI.Text = ""
-									inputUI.PlaceholderText = "..."
-								end
-							end))
+							propertiesMaid:Add(sig:Connect(refreshAttrComplex))
 						end
 					end
 				else
@@ -2351,9 +2549,62 @@ local function StartLogic()
 					inputUI.TextSize = 12
 					inputUI.TextXAlignment = Enum.TextXAlignment.Left
 					inputUI.Parent = pItem
+
+					local function refreshAttrGeneric()
+						if not pItem.Visible then return end
+						local firstVal = nil
+						local allSame = true
+						for _, o in pairs(targetObjects) do
+							local success, val = pcall(function() return o:GetAttribute(attrName) end)
+							if success then
+								if firstVal == nil then
+									firstVal = val
+								elseif firstVal ~= val then
+									allSame = false
+									break
+								end
+							end
+						end
+
+						if allSame and firstVal ~= nil then
+							inputUI.Text = tostring(firstVal)
+						else
+							inputUI.Text = "..."
+						end
+					end
+
+					table.insert(liveUpdaters, refreshAttrGeneric)
+
+					for _, obj in pairs(targetObjects) do
+						local success, sig = pcall(function()
+							return obj:GetAttributeChangedSignal(attrName)
+						end)
+						if success and sig then
+							propertiesMaid:Add(sig:Connect(refreshAttrGeneric))
+						end
+					end
 				end
 			end
+
+			for _, obj in pairs(targetObjects) do
+				propertiesMaid:Add(obj.AttributeChanged:Connect(function(attr)
+					if not attrList[attr] or obj:GetAttribute(attr) == nil then
+						updateGuiProperties(object)
+					end
+				end))
+			end
 		end
+
+		local pollTimer = 0
+		propertiesMaid:Add(RunService.Heartbeat:Connect(function(dt)
+			pollTimer = pollTimer + dt
+			if pollTimer >= 0.1 then
+				pollTimer = 0
+				for i = 1, #liveUpdaters do
+					liveUpdaters[i]()
+				end
+			end
+		end))
 
 		updatePropertiesScroll()
 	end
@@ -2585,7 +2836,6 @@ local function StartLogic()
 			PropertiesSearch.Text = ""
 		end))
 
-
 		maid:Add(sizeFrame.Select.MouseButton2Click:Connect(function() 
 			if not MultiSelection[obj] then
 				ClearSelection()
@@ -2651,7 +2901,6 @@ local function StartLogic()
 					if not NodeMap[child] then
 						VisibleChildren[child] = createNode(child, offset + 15, thisPrefix)
 						updateExplorerScroll()
-
 					end
 				end
 			end)
@@ -2677,7 +2926,6 @@ local function StartLogic()
 				RemoveFromSelection(obj)
 			end
 		end))
-
 
 		return dataC
 	end
