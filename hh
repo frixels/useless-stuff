@@ -200,6 +200,139 @@ local WELD_OFFSETS = {
 	carpet = CFrame.new(0, -3.715, 0) * CFrame.Angles(math.rad(90), 0, 0)
 }
 
+local EspSettings = {
+	Boxes = true,
+	HealthBar = true,
+	Names = true,
+	Distance = true,
+	VisibilityCheck = true,
+	BoxColor = Color3.fromRGB(150, 0, 255),
+	TextColor = Color3.fromRGB(255, 255, 255),
+}
+
+local espActive = false
+local espConnection = nil
+local espDrawings = {}
+local espAddedConnection = nil
+local espRemovingConnection = nil
+
+local function newDrawing(drawingType)
+	local obj = Drawing.new(drawingType)
+	obj.Visible = false
+	return obj
+end
+
+local function createESP(player)
+	if player == lp then return end
+	if espDrawings[player] then return end
+
+	espDrawings[player] = {
+		box = newDrawing("Square"),
+		health = newDrawing("Square"),
+		name = newDrawing("Text"),
+	}
+
+	espDrawings[player].box.Thickness = 2
+	espDrawings[player].box.Filled = false
+
+	espDrawings[player].health.Filled = true
+
+	espDrawings[player].name.Center = true
+	espDrawings[player].name.Outline = true
+	espDrawings[player].name.Size = 13
+end
+
+local function removeESP(player)
+	if espDrawings[player] then
+		for _, d in pairs(espDrawings[player]) do
+			d:Remove()
+		end
+		espDrawings[player] = nil
+	end
+end
+
+local function StartESP()
+	if espActive then return end
+	espActive = true
+
+	for _, p in ipairs(plrs:GetPlayers()) do
+		createESP(p)
+	end
+
+	espAddedConnection = plrs.PlayerAdded:Connect(createESP)
+	espRemovingConnection = plrs.PlayerRemoving:Connect(removeESP)
+
+	espConnection = RunService.RenderStepped:Connect(function()
+		local cam = workspace.CurrentCamera
+		for player, esp in pairs(espDrawings) do
+			local echar = player.Character
+			local ehum = echar and echar:FindFirstChild("Humanoid")
+			local ehrp = echar and echar:FindFirstChild("HumanoidRootPart")
+			local ehead = echar and echar:FindFirstChild("Head")
+
+			if ehum and ehrp and ehead and ehum.Health > 0 then
+				local top = cam:WorldToViewportPoint(ehead.Position + Vector3.new(0, 0.5, 0))
+				local bottom = cam:WorldToViewportPoint(ehrp.Position - Vector3.new(0, 3, 0))
+
+				if top.Z > 0 and bottom.Z > 0 then
+					local height = math.abs(top.Y - bottom.Y)
+					local width = height / 2
+
+					if EspSettings.Boxes then
+						esp.box.Size = Vector2.new(width, height)
+						esp.box.Position = Vector2.new(top.X - width / 2, top.Y)
+						esp.box.Color = EspSettings.BoxColor
+						esp.box.Visible = true
+					end
+
+					if EspSettings.HealthBar then
+						local hp = ehum.Health / ehum.MaxHealth
+						esp.health.Size = Vector2.new(4, height * hp)
+						esp.health.Position = Vector2.new(
+							top.X - width / 2 - 6,
+							top.Y + height * (1 - hp)
+						)
+						esp.health.Color = Color3.fromHSV(math.clamp(hp, 0, 1) * 0.3, 1, 1)
+						esp.health.Visible = true
+					end
+
+					if EspSettings.Names or EspSettings.Distance then
+						local dist = math.floor((cam.CFrame.Position - ehrp.Position).Magnitude)
+						esp.name.Text = player.Name .. " [" .. dist .. "m]"
+						esp.name.Position = Vector2.new(top.X, top.Y - 16)
+						esp.name.Color = EspSettings.TextColor
+						esp.name.Visible = true
+					end
+				else
+					for _, d in pairs(esp) do d.Visible = false end
+				end
+			else
+				for _, d in pairs(esp) do d.Visible = false end
+			end
+		end
+	end)
+end
+
+local function StopESP()
+	espActive = false
+	if espConnection then
+		espConnection:Disconnect()
+		espConnection = nil
+	end
+	if espAddedConnection then
+		espAddedConnection:Disconnect()
+		espAddedConnection = nil
+	end
+	if espRemovingConnection then
+		espRemovingConnection:Disconnect()
+		espRemovingConnection = nil
+	end
+	for player, _ in pairs(espDrawings) do
+		removeESP(player)
+	end
+	espDrawings = {}
+end
+
 local function updateCharacterReferences()
 	char = lp.Character
 	if char then
@@ -959,6 +1092,7 @@ local CommandCategories = {
 	{name = "Animation", commands = {}},
 	{name = "Weld/Attach", commands = {}},
 	{name = "Exploit", commands = {}},
+	{name = "Visuals", commands = {}},
 	{name = "Utility", commands = {}},
 }
 
@@ -1265,23 +1399,31 @@ addCommandToCategory(5, "sfling", function()
 	StopWalkFling()
 end)
 
-addCommandToCategory(6, "watch", function(args)
+addCommandToCategory(6, "esp", function()
+	StartESP()
+end)
+
+addCommandToCategory(6, "sesp", function()
+	StopESP()
+end)
+
+addCommandToCategory(7, "watch", function(args)
 	local targetPlayer = TargetFinder(table.concat(args, " "))
 	if targetPlayer then StartSpectate(targetPlayer) end
 end, "[player]")
 
-addCommandToCategory(6, "swatch", function()
+addCommandToCategory(7, "swatch", function()
 	StopSpectate()
 end)
 
-addCommandToCategory(6, "maxzoom", function(args)
+addCommandToCategory(7, "maxzoom", function(args)
 	local zoomValue = tonumber(args[1])
 	if zoomValue then
 		lp.CameraMaxZoomDistance = zoomValue
 	end
 end, "[distance]")
 
-addCommandToCategory(6, "fcam", function()
+addCommandToCategory(7, "fcam", function()
 	local camera = workspace.CurrentCamera
 	local character = lp.Character
 	if character and character:FindFirstChildOfClass("Humanoid") then
@@ -1289,7 +1431,7 @@ addCommandToCategory(6, "fcam", function()
 	end
 end)
 
-addCommandToCategory(6, "rs", function()
+addCommandToCategory(7, "rs", function()
 	game:GetService("HttpService"):requestInternal{
 		Url = "https://raw.githubusercontent.com/frixels/useless-stuff/refs/heads/main/Remotify",
 		Method = "GET"
@@ -1300,7 +1442,7 @@ addCommandToCategory(6, "rs", function()
 	end)
 end)
 
-addCommandToCategory(6, "dex", function()
+addCommandToCategory(7, "dex", function()
 	game:GetService("HttpService"):requestInternal{
 		Url = "https://raw.githubusercontent.com/frixels/useless-stuff/refs/heads/main/dex%20moficationationnation",
 		Method = "GET"
@@ -1311,7 +1453,7 @@ addCommandToCategory(6, "dex", function()
 	end)
 end)
 
-addCommandToCategory(6, "time", function(args)
+addCommandToCategory(7, "time", function(args)
 	if timeConnection then
 		timeConnection:Disconnect()
 		timeConnection = nil
@@ -1330,7 +1472,7 @@ addCommandToCategory(6, "time", function(args)
 	end)
 end, "[0-24]")
 
-addCommandToCategory(6, "cmds", function()
+addCommandToCategory(7, "cmds", function()
 	if CMDList.Visible then
 		savedCMDListPosition = CMDList.Position
 		local tween1 = TS:Create(CMDList, TweenInfo.new(0.1), {Position = UDim2.new(0.5, 0, 1.1, 0)})
