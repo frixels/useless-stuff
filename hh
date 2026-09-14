@@ -173,9 +173,13 @@ local spectateRefocusConnection = nil
 local timeConnection = nil
 local lastTick = tick()
 
-local flyConn1 = nil
-local flyConn2 = nil
-local flyModeSwitchConn = nil
+local flyHeartbeatConn = nil
+local flyInputBeganConn = nil
+local flyInputEndedConn = nil
+local flyControls = {W = 0, S = 0, A = 0, D = 0, Space = 0, LeftShift = 0}
+
+local walkFlingActive = false
+local walkFlingConnection = nil
 
 local BUA_CONFIG = {
 	TARGET_POSITION = nil,
@@ -207,30 +211,16 @@ local function updateCharacterReferences()
 	end
 end
 
-local function isInVehicle()
-	updateCharacterReferences()
-	if not char then return false end
-	local seat = char:FindFirstChildOfClass("Seat") or char:FindFirstChildOfClass("VehicleSeat")
-	if seat then return true end
-	if humanoid and humanoid.SeatPart and humanoid.SeatPart:IsA("VehicleSeat") then
-		return true
-	end
-	return false
-end
-
 local function StopFly()
 	flying = false
-	if flyConn1 then flyConn1:Disconnect(); flyConn1 = nil end
-	if flyConn2 then flyConn2:Disconnect(); flyConn2 = nil end
-	if flyModeSwitchConn then flyModeSwitchConn:Disconnect(); flyModeSwitchConn = nil end
+	if flyHeartbeatConn then flyHeartbeatConn:Disconnect(); flyHeartbeatConn = nil end
+	if flyInputBeganConn then flyInputBeganConn:Disconnect(); flyInputBeganConn = nil end
+	if flyInputEndedConn then flyInputEndedConn:Disconnect(); flyInputEndedConn = nil end
+	flyControls = {W = 0, S = 0, A = 0, D = 0, Space = 0, LeftShift = 0}
 	updateCharacterReferences()
 	if humRootPart then
-		local bv = humRootPart:FindFirstChild("IYFlyBV")
-		local bg = humRootPart:FindFirstChild("IYFlyBG")
-		if bv then bv:Destroy() end
-		if bg then bg:Destroy() end
-		local cbv = humRootPart:FindFirstChild("IYCFlyBV")
-		if cbv then cbv:Destroy() end
+		humRootPart.AssemblyLinearVelocity = Vector3.zero
+		humRootPart.AssemblyAngularVelocity = Vector3.zero
 	end
 	if humanoid then
 		humanoid.PlatformStand = false
@@ -238,129 +228,52 @@ local function StopFly()
 end
 
 local function StartFly(speed)
-	updateCharacterReferences()
-	if not char or not humanoid or not humRootPart then return end
-
 	if flying then
 		if speed then flySpeed = speed end
 		return
 	end
+	updateCharacterReferences()
+	if not char or not humanoid or not humRootPart then return end
 
 	flySpeed = speed or flySpeed
 	flying = true
+	humanoid.PlatformStand = true
+	flyControls = {W = 0, S = 0, A = 0, D = 0, Space = 0, LeftShift = 0}
 
-	local v3zero = Vector3.new(0, 0, 0)
-	local v3inf = Vector3.new(9e9, 9e9, 9e9)
-
-	local inCar = isInVehicle()
-
-	if not inCar then
-		local bv = Instance.new("BodyVelocity")
-		bv.Name = "IYFlyBV"
-		bv.MaxForce = v3zero
-		bv.Velocity = v3zero
-		bv.Parent = humRootPart
-
-		local bg = Instance.new("BodyGyro")
-		bg.Name = "IYFlyBG"
-		bg.MaxTorque = v3inf
-		bg.P = 1000
-		bg.D = 50
-		bg.Parent = humRootPart
-	else
-		local bv = Instance.new("BodyVelocity")
-		bv.Name = "IYCFlyBV"
-		bv.MaxForce = v3zero
-		bv.Velocity = v3zero
-		bv.Parent = humRootPart
-	end
-
-	flyConn1 = lp.CharacterAdded:Connect(function()
-		if flying then StopFly() end
+	flyInputBeganConn = UIS.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then return end
+		if flyControls[input.KeyCode.Name] ~= nil then
+			flyControls[input.KeyCode.Name] = 1
+		end
 	end)
 
-	flyConn2 = RunService.RenderStepped:Connect(function()
+	flyInputEndedConn = UIS.InputEnded:Connect(function(input)
+		if flyControls[input.KeyCode.Name] ~= nil then
+			flyControls[input.KeyCode.Name] = 0
+		end
+	end)
+
+	flyHeartbeatConn = RunService.Heartbeat:Connect(function()
 		updateCharacterReferences()
 		if not flying then return end
-		if not humRootPart or not humanoid then StopFly(); return end
+		if not humRootPart or not humRootPart.Parent or not humanoid then StopFly(); return end
 
-		local root = humRootPart
 		local cam = workspace.CurrentCamera
-		local nowInCar = isInVehicle()
+		if not cam then return end
 
-		if not nowInCar then
-			local cbv = root:FindFirstChild("IYCFlyBV")
-			if cbv then cbv:Destroy() end
+		local moveVector =
+			(cam.CFrame.LookVector * (flyControls.W - flyControls.S)) +
+			(cam.CFrame.RightVector * (flyControls.D - flyControls.A)) +
+			(Vector3.new(0, 1, 0) * (flyControls.Space - flyControls.LeftShift))
 
-			local currentBV = root:FindFirstChild("IYFlyBV")
-			local currentBG = root:FindFirstChild("IYFlyBG")
-
-			if not currentBV then
-				local bv = Instance.new("BodyVelocity")
-				bv.Name = "IYFlyBV"
-				bv.MaxForce = v3zero
-				bv.Velocity = v3zero
-				bv.Parent = root
-				currentBV = bv
-			end
-
-			if not currentBG then
-				local bg = Instance.new("BodyGyro")
-				bg.Name = "IYFlyBG"
-				bg.MaxTorque = v3inf
-				bg.P = 1000
-				bg.D = 50
-				bg.Parent = root
-				currentBG = bg
-			end
-
-			currentBV.MaxForce = v3inf
-			currentBG.MaxTorque = v3inf
-			humanoid.PlatformStand = true
-			currentBG.CFrame = cam.CFrame
-
-			local vel = v3zero
-			if UIS:IsKeyDown(Enum.KeyCode.W) then vel = vel + cam.CFrame.LookVector * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.S) then vel = vel - cam.CFrame.LookVector * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.A) then vel = vel - cam.CFrame.RightVector * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.D) then vel = vel + cam.CFrame.RightVector * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.Space) then vel = vel + Vector3.new(0, flySpeed, 0) end
-			if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vel = vel - Vector3.new(0, flySpeed, 0) end
-			currentBV.Velocity = vel
+		if moveVector.Magnitude > 0 then
+			moveVector = moveVector.Unit * flySpeed
 		else
-			local bv2 = root:FindFirstChild("IYFlyBV")
-			local bg2 = root:FindFirstChild("IYFlyBG")
-			if bv2 then bv2:Destroy() end
-			if bg2 then bg2:Destroy() end
-			if humanoid then humanoid.PlatformStand = false end
-
-			local currentBV = root:FindFirstChild("IYCFlyBV")
-			if not currentBV then
-				local bv = Instance.new("BodyVelocity")
-				bv.Name = "IYCFlyBV"
-				bv.MaxForce = v3zero
-				bv.Velocity = v3zero
-				bv.Parent = root
-				currentBV = bv
-			end
-
-			currentBV.MaxForce = v3inf
-			root.AssemblyAngularVelocity = Vector3.zero
-
-			local rawLook = cam.CFrame.LookVector
-			local rawRight = cam.CFrame.RightVector
-			local camLook = Vector3.new(rawLook.X, 0, rawLook.Z).Unit
-			local camRight = Vector3.new(rawRight.X, 0, rawRight.Z).Unit
-
-			local vel = v3zero
-			if UIS:IsKeyDown(Enum.KeyCode.W) then vel = vel + camLook * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.S) then vel = vel - camLook * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.A) then vel = vel - camRight * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.D) then vel = vel + camRight * flySpeed end
-			if UIS:IsKeyDown(Enum.KeyCode.E) then vel = vel + Vector3.new(0, flySpeed, 0) end
-			if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vel = vel - Vector3.new(0, flySpeed, 0) end
-			currentBV.Velocity = vel
+			moveVector = Vector3.zero
 		end
+
+		humRootPart.AssemblyAngularVelocity = Vector3.zero
+		humRootPart.AssemblyLinearVelocity = moveVector
 	end)
 end
 
@@ -400,12 +313,47 @@ local function Noclip(state)
 	end
 end
 
+local function StopWalkFling()
+	walkFlingActive = false
+	if walkFlingConnection then
+		walkFlingConnection:Disconnect()
+		walkFlingConnection = nil
+	end
+	updateCharacterReferences()
+	if humRootPart then
+		humRootPart.CanCollide = true
+	end
+end
+
+local function StartWalkFling()
+	if walkFlingActive then return end
+	walkFlingActive = true
+	updateCharacterReferences()
+	if not humRootPart then return end
+	humRootPart.CanCollide = false
+
+	walkFlingConnection = RunService.Heartbeat:Connect(function()
+		updateCharacterReferences()
+		if not walkFlingActive or not humRootPart or not humRootPart.Parent then
+			StopWalkFling()
+			return
+		end
+		local vel = humRootPart.Velocity
+		humRootPart.Velocity = Vector3.new(0, -9e33, 0)
+		RunService.RenderStepped:Wait()
+		if humRootPart and humRootPart.Parent then
+			humRootPart.Velocity = vel
+		end
+	end)
+end
+
 local function DeathHandler()
 	if humRootPart then
 		deathPosition = humRootPart.CFrame
 	end
 
-	flying = false
+	StopFly()
+	StopWalkFling()
 
 	for _, connection in pairs(NCC) do connection:Disconnect() end
 	NCC = {}
@@ -1080,8 +1028,6 @@ addCommandToCategory(1, "fly", function(args)
 	if flying then
 		if speed then
 			flySpeed = speed
-		else
-			StopFly()
 		end
 	else
 		StartFly(speed)
@@ -1309,6 +1255,14 @@ end)
 
 addCommandToCategory(5, "clickall", function()
 	ClickAll()
+end)
+
+addCommandToCategory(5, "fling", function()
+	StartWalkFling()
+end)
+
+addCommandToCategory(5, "sfling", function()
+	StopWalkFling()
 end)
 
 addCommandToCategory(6, "watch", function(args)
