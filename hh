@@ -1431,6 +1431,10 @@ addCommandToCategory(7, "fcam", function()
 	end
 end)
 
+addCommandToCategory(7, "rj", function()
+	game:GetService("TeleportService"):Teleport(game.PlaceId, lp)
+end)
+
 addCommandToCategory(7, "rs", function()
 	game:GetService("HttpService"):requestInternal{
 		Url = "https://raw.githubusercontent.com/frixels/useless-stuff/refs/heads/main/Remotify",
