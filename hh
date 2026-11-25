@@ -137,15 +137,6 @@ local humanoid = char and char:FindFirstChildOfClass("Humanoid")
 local humRootPart = char and char:FindFirstChild("HumanoidRootPart")
 local mouse = lp:GetMouse()
 
-if sigma and sigma.makescriptable then
-	pcall(function()
-		sigma.makescriptable(lp, "SimulationRadius")
-		sigma.makescriptable(lp, "MaxSimulationRadius")
-	end)
-end
-lp.MaxSimulationRadius = 10000
-lp.SimulationRadius = 10000
-
 local Commands = {}
 local savedCMDListPosition = UDim2.new(0.5, 0, 0.3, 0)
 local cmdBarOpen = false
